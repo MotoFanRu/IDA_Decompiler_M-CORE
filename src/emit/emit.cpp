@@ -351,6 +351,17 @@ class Structurer {
         os << ind_s(ind) << "}\n";
         return;
       }
+      // Single-block do-while (loc: body; if (cond) goto loc).
+      if (t0.kind == ir::TermKind::CondBranch && (succ_[n][0] == n || succ_[n][1] == n)) {
+        visited_.insert(n);
+        bool taken_self = succ_[n][0] == n;
+        os << ind_s(ind) << "do {\n";
+        emit_stmts(n, ind + 1, os);
+        ir::ExprPtr stay = taken_self ? t0.cond : negate(t0.cond);
+        os << ind_s(ind) << "} while (" << render(*stay, vm_, 0) << ");\n";
+        n = taken_self ? succ_[n][1] : succ_[n][0];  // continue at the exit
+        continue;
+      }
       if (loops_.count(n) && (loopctx_.empty() || loopctx_.back().first != n)) {
         emit_loop(n, ind, os);
         n = loops_[n].exit;
