@@ -227,6 +227,14 @@ std::vector<ir::ExprPtr> compute_c_reaching(const ir::Function &fn) {
         else if (!expr_equal(meet, c_out[p])) { ok = false; }
       }
       ir::ExprPtr nv = (first || !ok) ? nullptr : meet;
+      // At a join, two predecessors' conditions can be structurally identical yet
+      // mean different values (the same register holds different things). Only a
+      // constant condition is safe to merge across multiple predecessors.
+      if (nv && preds[i].size() > 1) {
+        std::map<int, int> r;
+        count_reads(nv, r);
+        if (!r.empty()) nv = nullptr;
+      }
       if (!expr_equal(nv, c_in[i])) { c_in[i] = nv; changed = true; }
     }
     if (!changed) break;
