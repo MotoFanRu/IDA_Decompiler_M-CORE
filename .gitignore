@@ -1,0 +1,22 @@
+# Build output
+/cmake-build-*/
+/build/
+*.so
+*.o
+*.a
+
+# IDE
+/.idea/
+/.vscode/
+
+# IDA databases / artifacts produced by tests
+*.i64
+*.idb
+*.id0
+*.id1
+*.id2
+*.nam
+*.til
+
+# Test scratch
+/tests/integration/_work/
