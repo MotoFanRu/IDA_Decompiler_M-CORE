@@ -34,3 +34,11 @@ function(ida_configure_plugin tgt)
     OUTPUT_NAME "${tgt}"
     POSITION_INDEPENDENT_CODE ON)
 endfunction()
+
+# Helper: turn a target into an IDA processor module (additionally defines __IDP__
+# and exports LPH). Default symbol visibility exports LPH, so no version script is
+# needed on this install.
+function(ida_configure_processor_module tgt)
+  ida_configure_plugin(${tgt})
+  target_compile_definitions(${tgt} PRIVATE __IDP__)
+endfunction()

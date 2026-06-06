@@ -1,0 +1,3 @@
+[submodule "third_party/mcore-proc"]
+	path = third_party/mcore-proc
+	url = https://github.com/MotoFanRu/M-CORE_IDA-Pro
