@@ -53,6 +53,32 @@ std::string cast_type(int size, bool is_signed) {
   }
 }
 
+std::string render(const ir::Expr &e, const vars::VarMap &vm, int min_prec);
+
+// If `addr` is `base + index * size` (or `base + index << log2(size)`), return
+// the array form `base[index]`; the scaling proves the element type, so this is
+// a sound, readable rewrite. Returns empty if it does not match.
+std::string array_form(const ir::Expr &addr, int size, const vars::VarMap &vm) {
+  if (addr.kind != ir::ExprKind::BinOp || addr.binop != ir::BinOp::Add || !addr.a || !addr.b)
+    return {};
+  const ir::Expr &base = *addr.a;
+  const ir::Expr &scaled = *addr.b;
+  auto scale_ok = [&](const ir::Expr &s) -> const ir::Expr * {
+    if (s.kind == ir::ExprKind::BinOp && s.binop == ir::BinOp::Mul && s.a && s.b) {
+      if (s.b->kind == ir::ExprKind::Const && s.b->value == size) return s.a.get();
+      if (s.a->kind == ir::ExprKind::Const && s.a->value == size) return s.b.get();
+    }
+    int sh = size == 4 ? 2 : size == 2 ? 1 : -1;
+    if (sh >= 0 && s.kind == ir::ExprKind::BinOp && s.binop == ir::BinOp::Shl && s.b &&
+        s.b->kind == ir::ExprKind::Const && s.b->value == sh)
+      return s.a.get();
+    return nullptr;
+  };
+  const ir::Expr *index = scale_ok(scaled);
+  if (!index) return {};
+  return render(base, vm, kUnPrec) + "[" + render(*index, vm, 0) + "]";
+}
+
 std::string render(const ir::Expr &e, const vars::VarMap &vm, int min_prec) {
   switch (e.kind) {
     case ir::ExprKind::Const: {
@@ -81,6 +107,8 @@ std::string render(const ir::Expr &e, const vars::VarMap &vm, int min_prec) {
       return oi.prec < min_prec ? "(" + s + ")" : s;
     }
     case ir::ExprKind::Load: {
+      std::string arr = e.a ? array_form(*e.a, e.size, vm) : std::string();
+      if (!arr.empty()) return arr;  // base[index] — postfix, no wrapping needed
       std::string s = "*(" + std::string(type_name(e.size)) + " *)(" +
                       (e.a ? render(*e.a, vm, 0) : "") + ")";
       return kUnPrec < min_prec ? "(" + s + ")" : s;
@@ -110,10 +138,14 @@ std::string stmt_str(const ir::Stmt &s, const vars::VarMap &vm) {
   switch (s.kind) {
     case ir::StmtKind::Assign:
       return vm.name_of(s.dst_reg) + " = " + (s.expr ? render(*s.expr, vm, 0) : "?") + ";";
-    case ir::StmtKind::Store:
-      return "*(" + std::string(type_name(s.size)) + " *)(" +
-             (s.addr ? render(*s.addr, vm, 0) : "") + ") = " +
-             (s.expr ? render(*s.expr, vm, 0) : "?") + ";";
+    case ir::StmtKind::Store: {
+      std::string arr = s.addr ? array_form(*s.addr, s.size, vm) : std::string();
+      std::string lhs = !arr.empty()
+          ? arr
+          : "*(" + std::string(type_name(s.size)) + " *)(" +
+                (s.addr ? render(*s.addr, vm, 0) : "") + ")";
+      return lhs + " = " + (s.expr ? render(*s.expr, vm, 0) : "?") + ";";
+    }
     case ir::StmtKind::Unknown:
       return "// " + s.text;
   }

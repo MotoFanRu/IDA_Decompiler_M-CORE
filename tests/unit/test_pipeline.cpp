@@ -172,6 +172,18 @@ TEST("store renders as typed pointer assignment") {
   CHECK(contains(c, "*(int *)(a1) = a2;"));
 }
 
+TEST("scaled load/store render as array indexing") {
+  vars::VarMap vm;
+  // *(int*)(r2 + r3*4)  ->  r2[r3]
+  auto addr = ir::binop(ir::BinOp::Add, ir::reg(2),
+                        ir::binop(ir::BinOp::Mul, ir::reg(3), ir::constant(4)));
+  CHECK(emit::emit_expr(*ir::load(addr, 4), vm) == "r2[r3]");
+  // non-matching scale stays as a typed deref
+  auto addr2 = ir::binop(ir::BinOp::Add, ir::reg(2),
+                         ir::binop(ir::BinOp::Mul, ir::reg(3), ir::constant(2)));
+  CHECK(emit::emit_expr(*ir::load(addr2, 4), vm) == "*(int *)(r2 + r3 * 2)");
+}
+
 TEST("byte load uses unsigned char pointer") {
   ir::Function fn = one_block({ir::assign(2, ir::load(ir::reg(2), 1))}, ir::reg(2));
   CHECK(contains(decompile(std::move(fn)), "*(unsigned char *)(a1)"));
