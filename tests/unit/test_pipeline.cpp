@@ -272,6 +272,26 @@ TEST("bitwise-not and and-not render") {
   CHECK(emit::emit_expr(*andn, vm) == "r2 & ~r3");
 }
 
+TEST("algebraic identity x + 0 folds away") {
+  ir::Function fn = one_block({ir::assign(3, ir::binop(ir::BinOp::Add, ir::reg(2), ir::constant(0)))}, ir::reg(3));
+  std::string c = decompile(std::move(fn));
+  CHECK(contains(c, "return a1;"));
+  CHECK(!contains(c, "+ 0"));
+}
+
+TEST("add-with-carry: cleared carry folds, then carry flows") {
+  // C = 0 (carry clear) ; r2 = r2 + r3 + C  ->  a1 = a1 + a2;
+  std::vector<ir::Stmt> stmts;
+  stmts.push_back(ir::assign(ir::kRegC, ir::constant(0)));
+  stmts.push_back(ir::assign(2, ir::binop(ir::BinOp::Add,
+      ir::binop(ir::BinOp::Add, ir::reg(2), ir::reg(3)), ir::reg(ir::kRegC))));
+  ir::Function fn = one_block(std::move(stmts), ir::reg(2));
+  std::string c = decompile(std::move(fn));
+  CHECK(contains(c, "a1 + a2"));
+  CHECK(!contains(c, "+ 0"));
+  CHECK(!contains(c, "cond"));
+}
+
 TEST("un-lifted instruction renders as inline asm") {
   ir::Function fn = one_block({ir::unknown(0, "addc    r3, r13")}, ir::reg(2));
   CHECK(contains(decompile(std::move(fn)), "__asm { addc    r3, r13 }"));

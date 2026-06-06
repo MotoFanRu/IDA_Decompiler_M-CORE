@@ -63,6 +63,27 @@ ir::ExprPtr rewrite(const ir::ExprPtr &e, const std::map<int, ir::ExprPtr> &defs
       if (is_const(a) && is_const(b))
         if (ir::ExprPtr f = fold_binop(e->binop, a->value, b->value))
           return f;
+      // Compare of identical simple operands (e.g. the cmpne r0,r0 carry-clear).
+      bool same = (a->kind == ir::ExprKind::Reg && b->kind == ir::ExprKind::Reg && a->reg == b->reg) ||
+                  (is_const(a) && is_const(b) && a->value == b->value);
+      if (same) {
+        if (e->binop == ir::BinOp::CmpNe || e->binop == ir::BinOp::CmpLt) return ir::constant(0);
+        if (e->binop == ir::BinOp::CmpEq || e->binop == ir::BinOp::CmpHs) return ir::constant(1);
+      }
+      // Algebraic identities (clean up e.g. the '+ 0' from a cleared carry).
+      auto isc = [](const ir::ExprPtr &x, int64_t v) { return is_const(x) && x->value == v; };
+      switch (e->binop) {
+        case ir::BinOp::Add: case ir::BinOp::Or: case ir::BinOp::Xor:
+          if (isc(b, 0)) return a; if (isc(a, 0)) return b; break;
+        case ir::BinOp::Sub: case ir::BinOp::Shl: case ir::BinOp::Shr: case ir::BinOp::Sar:
+          if (isc(b, 0)) return a; break;
+        case ir::BinOp::Mul:
+          if (isc(b, 1)) return a; if (isc(a, 1)) return b;
+          if (isc(a, 0) || isc(b, 0)) return ir::constant(0); break;
+        case ir::BinOp::And:
+          if (isc(a, 0) || isc(b, 0)) return ir::constant(0); break;
+        default: break;
+      }
       return ir::binop(e->binop, a, b);
     }
     case ir::ExprKind::Cast: {
@@ -96,9 +117,18 @@ ir::ExprPtr rewrite(const ir::ExprPtr &e, const std::map<int, ir::ExprPtr> &defs
   return e;
 }
 
+// '__'-prefixed calls are pure intrinsics (e.g. __carry/__ff1): no side effects.
+bool is_pure_intrinsic(const ir::ExprPtr &e) {
+  return e->kind == ir::ExprKind::Call && !e->name.empty() && e->name.rfind("__", 0) == 0;
+}
+
 bool has_call(const ir::ExprPtr &e) {
   if (!e) return false;
-  if (e->kind == ir::ExprKind::Call) return true;
+  if (e->kind == ir::ExprKind::Call) {
+    if (!is_pure_intrinsic(e)) return true;  // real (or indirect) call: side effect
+    for (const auto &x : e->args) if (has_call(x)) return true;
+    return false;
+  }
   if (e->kind == ir::ExprKind::Load || e->kind == ir::ExprKind::UnOp ||
       e->kind == ir::ExprKind::Cast)
     return has_call(e->a);
@@ -295,8 +325,11 @@ void simplify(ir::Function &fn) {
     int vctr = 0;
     auto vidof = [&](int r) { auto it = vid.find(r); return it != vid.end() ? it->second : -(r + 1); };
 
+    std::map<int, ir::ExprPtr> none;
     auto resolve = [&](const ir::ExprPtr &e) {
-      return fold_not(subst_c(rewrite(e, cprop), c_cur));
+      // Re-fold after the C value is substituted in (it may be a constant, e.g.
+      // a cleared carry, leaving 'x + 0' to simplify).
+      return fold_not(rewrite(subst_c(rewrite(e, cprop), c_cur), none));
     };
 
     for (auto &s : b.stmts) {
@@ -373,8 +406,8 @@ bool propagatable(const ir::ExprPtr &e, int usecount) {
     case ir::ExprKind::Cast: return propagatable(e->a, usecount);
     case ir::ExprKind::UnOp:
     case ir::ExprKind::BinOp: return usecount == 1; // pure arithmetic: single use only
-    case ir::ExprKind::Load:
-    case ir::ExprKind::Call: return false;          // side effects / ordering
+    case ir::ExprKind::Call: return is_pure_intrinsic(e) && usecount == 1;  // __carry etc.
+    case ir::ExprKind::Load: return false;          // side effects / ordering
   }
   return false;
 }

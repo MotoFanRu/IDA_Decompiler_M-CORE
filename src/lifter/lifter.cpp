@@ -72,6 +72,18 @@ void lift_insn(const insn_t &insn, ir::Block &blk) {
 
     case mcore_addu: rr(ir::BinOp::Add); break;
     case mcore_subu: rr(ir::BinOp::Sub); break;
+    case mcore_addc:  // d = d + s + C ; C = carry out  (C is the shared carry/condition bit)
+      blk.stmts.push_back(ir::assign(d,
+          ir::binop(ir::BinOp::Add, ir::binop(ir::BinOp::Add, ir::reg(d), ir::reg(s)), ir::reg(ir::kRegC)), ea));
+      blk.stmts.push_back(ir::assign(ir::kRegC, ir::call("__carry", {ir::reg(d), ir::reg(s)}), ea));
+      break;
+    case mcore_subc:  // d = d - s - 1 + C ; C = not-borrow out
+      blk.stmts.push_back(ir::assign(d,
+          ir::binop(ir::BinOp::Add,
+              ir::binop(ir::BinOp::Sub, ir::binop(ir::BinOp::Sub, ir::reg(d), ir::reg(s)), ir::constant(1)),
+              ir::reg(ir::kRegC)), ea));
+      blk.stmts.push_back(ir::assign(ir::kRegC, ir::call("__borrow", {ir::reg(d), ir::reg(s)}), ea));
+      break;
     case mcore_and:  rr(ir::BinOp::And); break;
     case mcore_or:   rr(ir::BinOp::Or);  break;
     case mcore_xor:  rr(ir::BinOp::Xor); break;
