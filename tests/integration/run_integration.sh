@@ -7,7 +7,7 @@
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-IDA_DIR="${IDA_DIR:-/home/fk/ida-pro-9.0}"
+: "${IDA_DIR:?set IDA_DIR to your IDA Pro 9 install (the one with idat and procs/mcore*.so)}"
 IDAT="${IDA_DIR}/idat"
 PLUGIN="${ROOT}/build/mcore_decompiler.so"
 SCRIPT="${ROOT}/tests/integration/decompile_dump.py"

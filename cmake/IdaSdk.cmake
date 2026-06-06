@@ -6,7 +6,9 @@ if(NOT DEFINED IDA_DIR)
   if(DEFINED ENV{IDA_DIR})
     set(IDA_DIR "$ENV{IDA_DIR}")
   else()
-    set(IDA_DIR "/home/fk/ida-pro-9.0")
+    message(FATAL_ERROR
+      "IDA_DIR is not set. Point it at your IDA Pro 9 install that ships the SDK "
+      "headers and libida.so, e.g.  -DIDA_DIR=/path/to/ida-pro-9.0  (or export IDA_DIR=...).")
   endif()
 endif()
 
