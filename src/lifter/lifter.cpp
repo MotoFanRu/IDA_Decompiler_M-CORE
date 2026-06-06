@@ -22,9 +22,10 @@ namespace mcore {
 
 namespace {
 
-ir::Stmt lift_unknown(ea_t ea) {
+ir::Stmt lift_unknown(ea_t ea, int itype = -1) {
   qstring line;
   generate_disasm_line(&line, ea, GENDSM_REMOVE_TAGS);
+  if (itype >= 0) line.cat_sprnt("   [itype=%d]", itype);
   return ir::unknown((uint32_t)ea, line.c_str());
 }
 
@@ -89,6 +90,57 @@ void lift_insn(const insn_t &insn, ir::Block &blk) {
     case mcore_cmplti: setc(ir::BinOp::CmpLt, ir::constant(imm)); break;
     case mcore_cmpnei: setc(ir::BinOp::CmpNe, ir::constant(imm)); break;
 
+    case mcore_mult: rr(ir::BinOp::Mul); break;
+    case mcore_andi: ri(ir::BinOp::And); break;
+    case mcore_ixw:  // d = d + s*4
+      blk.stmts.push_back(ir::assign(d, ir::binop(ir::BinOp::Add, ir::reg(d),
+          ir::binop(ir::BinOp::Mul, ir::reg(s), ir::constant(4))), ea));
+      break;
+    case mcore_ixh:  // d = d + s*2
+      blk.stmts.push_back(ir::assign(d, ir::binop(ir::BinOp::Add, ir::reg(d),
+          ir::binop(ir::BinOp::Mul, ir::reg(s), ir::constant(2))), ea));
+      break;
+
+    // Bit operations (imm = bit number).
+    case mcore_bseti:  // d |= 1<<n
+      blk.stmts.push_back(ir::assign(d, ir::binop(ir::BinOp::Or, ir::reg(d),
+          ir::constant((int64_t)(1u << imm))), ea));
+      break;
+    case mcore_bclri:  // d &= ~(1<<n)
+      blk.stmts.push_back(ir::assign(d, ir::binop(ir::BinOp::And, ir::reg(d),
+          ir::constant((int64_t)(uint32_t)~(1u << imm))), ea));
+      break;
+    case mcore_btsti:  // C = (d >> n) & 1
+      blk.stmts.push_back(ir::assign(ir::kRegC, ir::binop(ir::BinOp::And,
+          ir::binop(ir::BinOp::Shr, ir::reg(d), ir::constant(imm)), ir::constant(1)), ea));
+      break;
+
+    // Sign/zero extensions -> readable casts.
+    case mcore_zextb: blk.stmts.push_back(ir::assign(d, ir::cast(1, false, ir::reg(d)), ea)); break;
+    case mcore_sextb: blk.stmts.push_back(ir::assign(d, ir::cast(1, true,  ir::reg(d)), ea)); break;
+    case mcore_zexth: blk.stmts.push_back(ir::assign(d, ir::cast(2, false, ir::reg(d)), ea)); break;
+    case mcore_sexth: blk.stmts.push_back(ir::assign(d, ir::cast(2, true,  ir::reg(d)), ea)); break;
+
+    // Load relative word: a 32-bit value (constant or resolved symbol) from the
+    // literal pool. IDA puts the loaded value in ops[1].addr.
+    case mcore_lrw: {
+      int64_t v = (int64_t)insn.ops[1].addr;
+      qstring nm;
+      if (get_name(&nm, (ea_t)v) > 0 && !nm.empty())
+        blk.stmts.push_back(ir::assign(d, ir::const_named(v, nm.c_str()), ea));
+      else
+        blk.stmts.push_back(ir::assign(d, ir::constant((int64_t)(uint32_t)v), ea));
+      break;
+    }
+    // Indirect call via the literal pool; IDA resolves the target in ops[0].addr.
+    case mcore_jsri: {
+      ea_t tgt = (ea_t)insn.ops[0].addr;
+      qstring nm;
+      if (get_name(&nm, tgt) <= 0 || nm.empty()) nm.sprnt("sub_%X", (unsigned)tgt);
+      blk.stmts.push_back(ir::assign(ir::kRegRet, ir::call(nm.c_str(), call_args()), ea));
+      break;
+    }
+
     // Memory: ops[0] = value/dest reg, ops[1] = (base, offset).
     case mcore_ld:   load_to(4); break;
     case mcore_ld_h: load_to(2); break;
@@ -110,7 +162,7 @@ void lift_insn(const insn_t &insn, ir::Block &blk) {
           ir::assign(ir::kRegRet, ir::call_indirect(ir::reg(insn.ops[0].reg), call_args()), ea));
       break;
 
-    default: blk.stmts.push_back(lift_unknown((ea_t)ea)); break;
+    default: blk.stmts.push_back(lift_unknown((ea_t)ea, insn.itype)); break;
   }
 }
 

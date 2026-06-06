@@ -62,6 +62,18 @@ ir::ExprPtr rewrite(const ir::ExprPtr &e, const std::map<int, ir::ExprPtr> &defs
           return f;
       return ir::binop(e->binop, a, b);
     }
+    case ir::ExprKind::Cast: {
+      ir::ExprPtr a = rewrite(e->a, defs);
+      if (is_const(a)) {
+        int64_t v = a->value;
+        switch (e->size) {
+          case 1: return ir::constant(e->is_signed ? (int8_t)v : (uint8_t)v);
+          case 2: return ir::constant(e->is_signed ? (int16_t)v : (uint16_t)v);
+          default: return ir::constant(e->is_signed ? (int32_t)v : (uint32_t)v);
+        }
+      }
+      return ir::cast(e->size, e->is_signed, a);
+    }
     case ir::ExprKind::Load:
       return ir::load(rewrite(e->a, defs), e->size);
     case ir::ExprKind::Call: {
@@ -77,7 +89,9 @@ ir::ExprPtr rewrite(const ir::ExprPtr &e, const std::map<int, ir::ExprPtr> &defs
 bool has_call(const ir::ExprPtr &e) {
   if (!e) return false;
   if (e->kind == ir::ExprKind::Call) return true;
-  if (e->kind == ir::ExprKind::Load || e->kind == ir::ExprKind::UnOp) return has_call(e->a);
+  if (e->kind == ir::ExprKind::Load || e->kind == ir::ExprKind::UnOp ||
+      e->kind == ir::ExprKind::Cast)
+    return has_call(e->a);
   if (e->kind == ir::ExprKind::BinOp) return has_call(e->a) || has_call(e->b);
   return false;
 }
@@ -91,6 +105,7 @@ ir::ExprPtr subst_c(const ir::ExprPtr &e, const ir::ExprPtr &c) {
     case ir::ExprKind::UnOp:  return ir::unop(e->unop, subst_c(e->a, c));
     case ir::ExprKind::BinOp: return ir::binop(e->binop, subst_c(e->a, c), subst_c(e->b, c));
     case ir::ExprKind::Load:  return ir::load(subst_c(e->a, c), e->size);
+    case ir::ExprKind::Cast:  return ir::cast(e->size, e->is_signed, subst_c(e->a, c));
     case ir::ExprKind::Call:  return e;  // C-bit never flows into call args here
   }
   return e;
@@ -120,6 +135,7 @@ void count_reads(const ir::ExprPtr &e, std::map<int, int> &reads) {
     case ir::ExprKind::Const: break;
     case ir::ExprKind::Reg: reads[e->reg]++; break;
     case ir::ExprKind::UnOp:
+    case ir::ExprKind::Cast:
     case ir::ExprKind::Load: count_reads(e->a, reads); break;
     case ir::ExprKind::BinOp: count_reads(e->a, reads); count_reads(e->b, reads); break;
     case ir::ExprKind::Call:

@@ -21,6 +21,7 @@ void collect_regs(const ir::ExprPtr &e, std::vector<int> &out) {
     case ir::ExprKind::Const: break;
     case ir::ExprKind::Reg: out.push_back(e->reg); break;
     case ir::ExprKind::UnOp:
+    case ir::ExprKind::Cast:
     case ir::ExprKind::Load: collect_regs(e->a, out); break;
     case ir::ExprKind::BinOp:
       collect_regs(e->a, out);

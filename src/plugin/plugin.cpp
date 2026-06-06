@@ -37,14 +37,20 @@ qstring decompile_text(func_t *pfn) {
 struct mcore_plugmod_t : public plugmod_t {
   mcore_plugmod_t() { msg("[mcore-decompiler] loaded\n"); }
 
-  bool idaapi run(size_t /*arg*/) override {
-    // Batch-friendly: decompile every function and print. A focused, cursor-based
-    // action + custom viewer come in B8.
+  bool idaapi run(size_t arg) override {
+    // arg != 0: decompile only the function at/containing that address (used by
+    // the evaluation harness). arg == 0: decompile every function.
+    // Unique markers let headless tooling extract pseudocode from the log.
+    if (arg != 0) {
+      if (func_t *pfn = get_func((ea_t)arg))
+        msg(">>>MCORE_FUNC %a\n%s<<<MCORE_END\n", pfn->start_ea,
+            decompile_text(pfn).c_str());
+      return true;
+    }
     size_t qty = get_func_qty();
     msg("[mcore-decompiler] run: %zu function(s)\n", qty);
     for (size_t i = 0; i < qty; ++i) {
       func_t *pfn = getn_func(i);
-      // Unique markers so headless tests can extract pseudocode from the log.
       msg(">>>MCORE_FUNC %a\n%s<<<MCORE_END\n", pfn->start_ea,
           decompile_text(pfn).c_str());
     }

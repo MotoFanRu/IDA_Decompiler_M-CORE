@@ -21,7 +21,7 @@ inline constexpr int kRegRet = 2;   // r2 holds the return value (ABI)
 inline constexpr int kRegLR = 15;   // r15 link register
 inline constexpr int kRegC = 100;   // synthetic 1-bit condition (PSR C bit)
 
-enum class ExprKind { Const, Reg, BinOp, UnOp, Load, Call };
+enum class ExprKind { Const, Reg, BinOp, UnOp, Load, Call, Cast };
 
 enum class BinOp {
   Add, Sub, Mul,
@@ -41,9 +41,10 @@ struct Expr {
   int reg = 0;              // Reg
   BinOp binop{};            // BinOp
   UnOp unop{};              // UnOp
-  ExprPtr a, b;             // operands (Load: a=address; Call: a=indirect target)
-  int size = 0;             // Load access size in bytes
-  std::string name;         // Call: target name (direct call)
+  ExprPtr a, b;             // operands (Load: a=address; Call: a=indirect target; Cast: a=inner)
+  int size = 0;             // Load/Cast access size in bytes
+  bool is_signed = false;   // Cast signedness
+  std::string name;         // Call target name / named Const (symbol)
   std::vector<ExprPtr> args;// Call arguments
 };
 
@@ -51,6 +52,21 @@ inline ExprPtr constant(int64_t v) {
   auto e = std::make_shared<Expr>();
   e->kind = ExprKind::Const;
   e->value = v;
+  return e;
+}
+inline ExprPtr const_named(int64_t v, std::string name) {
+  auto e = std::make_shared<Expr>();
+  e->kind = ExprKind::Const;
+  e->value = v;
+  e->name = std::move(name);
+  return e;
+}
+inline ExprPtr cast(int size, bool is_signed, ExprPtr a) {
+  auto e = std::make_shared<Expr>();
+  e->kind = ExprKind::Cast;
+  e->size = size;
+  e->is_signed = is_signed;
+  e->a = std::move(a);
   return e;
 }
 inline ExprPtr reg(int r) {

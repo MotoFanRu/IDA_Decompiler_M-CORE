@@ -43,10 +43,29 @@ const char *type_name(int size) {
   }
 }
 
+std::string cast_type(int size, bool is_signed) {
+  switch (size) {
+    case 1: return is_signed ? "char" : "unsigned char";
+    case 2: return is_signed ? "short" : "unsigned short";
+    default: return is_signed ? "int" : "unsigned int";
+  }
+}
+
 std::string render(const ir::Expr &e, const vars::VarMap &vm, int min_prec) {
   switch (e.kind) {
-    case ir::ExprKind::Const: { std::ostringstream os; os << e.value; return os.str(); }
+    case ir::ExprKind::Const: {
+      if (!e.name.empty()) return e.name;  // resolved symbol (lrw)
+      std::ostringstream os;
+      if (e.value > 255) os << "0x" << std::hex << e.value;  // masks, shifted consts
+      else os << std::dec << e.value;
+      return os.str();
+    }
     case ir::ExprKind::Reg: return vm.name_of(e.reg);
+    case ir::ExprKind::Cast: {
+      std::string s = "(" + cast_type(e.size, e.is_signed) + ")" +
+                      (e.a ? render(*e.a, vm, kUnPrec) : "");
+      return kUnPrec < min_prec ? "(" + s + ")" : s;
+    }
     case ir::ExprKind::UnOp: {
       const char *op = e.unop == ir::UnOp::Neg ? "-" : e.unop == ir::UnOp::Not ? "~" : "!";
       std::string s = std::string(op) + (e.a ? render(*e.a, vm, kUnPrec) : "");

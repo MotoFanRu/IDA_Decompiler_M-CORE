@@ -190,6 +190,36 @@ TEST("call with unused result is not eliminated") {
   CHECK(contains(c, "return 0;"));
 }
 
+TEST("cast renders and folds") {
+  vars::VarMap vm;
+  CHECK(emit::emit_expr(*ir::cast(1, false, ir::reg(2)), vm) == "(unsigned char)r2");
+  CHECK(emit::emit_expr(*ir::cast(1, true, ir::reg(2)), vm) == "(char)r2");
+  // fold cast of a constant: (unsigned char)0x1FF == 0xFF == 255
+  ir::Function fn = one_block({ir::assign(2, ir::cast(1, false, ir::constant(0x1FF)))}, ir::reg(2));
+  CHECK(contains(decompile(std::move(fn)), "return 255;"));
+}
+
+TEST("named constant (lrw symbol) renders as the symbol") {
+  vars::VarMap vm;
+  CHECK(emit::emit_expr(*ir::const_named(0x10040A30, "dword_10040A30"), vm) == "dword_10040A30");
+}
+
+TEST("movi + shift idiom folds to one constant (rendered hex)") {
+  // movi r2,3 ; lsli r2,16  ->  r2 = 0x30000
+  ir::Function fn = one_block(
+      {ir::assign(2, ir::constant(3)),
+       ir::assign(2, ir::binop(ir::BinOp::Shl, ir::reg(2), ir::constant(16)))},
+      ir::reg(2));
+  CHECK(contains(decompile(std::move(fn)), "return 0x30000;"));
+}
+
+TEST("large constant renders hex, small decimal") {
+  vars::VarMap vm;
+  CHECK(emit::emit_expr(*ir::constant(0x1000), vm) == "0x1000");
+  CHECK(emit::emit_expr(*ir::constant(42), vm) == "42");
+  CHECK(emit::emit_expr(*ir::constant(-1), vm) == "-1");
+}
+
 TEST("pre-test while loop structuring") {
   // B0: C = r2 < r3 ; bf B2(exit)    (stay in loop while a<b)
   // B1: r2 = r2 + 1 ; goto B0        (back edge)
