@@ -295,8 +295,7 @@ class Structurer {
           }
 
       const ir::Terminator &th = fn_.blocks[h].term;
-      bool header_ok = th.kind == ir::TermKind::CondBranch &&
-                       fn_.blocks[h].stmts.empty();
+      bool header_ok = th.kind == ir::TermKind::CondBranch;
       if (multi_exit || exit_node == -1 || !header_ok) { structurable_ = false; return; }
 
       int taken = succ_[h][0], fth = succ_[h][1];
@@ -324,9 +323,18 @@ class Structurer {
   void emit_loop(int h, int ind, std::ostringstream &os) {
     const Loop &lp = loops_[h];
     visited_.insert(h);
-    os << ind_s(ind) << "while (" << render(*lp.stay, vm_, 0) << ") {\n";
     loopctx_.push_back({h, lp.exit});
-    emit_seq(lp.in_succ, h, ind + 1, os);
+    if (fn_.blocks[h].stmts.empty()) {
+      // Clean pre-test loop: while (cond) { body }.
+      os << ind_s(ind) << "while (" << render(*lp.stay, vm_, 0) << ") {\n";
+      emit_seq(lp.in_succ, h, ind + 1, os);
+    } else {
+      // Header computes the condition: while (1) { header; if (!cond) break; body }.
+      os << ind_s(ind) << "while (1) {\n";
+      emit_stmts(h, ind + 1, os);
+      os << ind_s(ind + 1) << "if (" << render(*negate(lp.stay), vm_, 0) << ") break;\n";
+      emit_seq(lp.in_succ, h, ind + 1, os);
+    }
     loopctx_.pop_back();
     os << ind_s(ind) << "}\n";
   }
@@ -338,7 +346,7 @@ class Structurer {
       if ((t0.kind == ir::TermKind::Goto || t0.kind == ir::TermKind::Fallthrough) &&
           !succ_[n].empty() && succ_[n][0] == n) {
         visited_.insert(n);
-        os << ind_s(ind) << "while ( 1 )\n" << ind_s(ind) << "{\n";
+        os << ind_s(ind) << "while (1) {\n";
         emit_stmts(n, ind + 1, os);
         os << ind_s(ind) << "}\n";
         return;
