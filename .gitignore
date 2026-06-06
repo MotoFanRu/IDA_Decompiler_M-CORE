@@ -20,3 +20,6 @@
 
 # Test scratch
 /tests/integration/_work/
+
+# Local design notes (kept out of the repo)
+/docs/
