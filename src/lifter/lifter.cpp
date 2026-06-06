@@ -11,6 +11,8 @@
 #include <lines.hpp>
 
 #include <algorithm>
+#include <set>
+#include <vector>
 
 // Instruction- and register-id enums from the vendored M*CORE module.
 #include "ins.hpp"     // nameNum: mcore_movi, mcore_addu, mcore_bt, ...
@@ -42,6 +44,24 @@ void lift_insn(const insn_t &insn, ir::Block &blk) {
   auto setc = [&](ir::BinOp cmp, ir::ExprPtr rhs) {
     blk.stmts.push_back(ir::assign(ir::kRegC, ir::binop(cmp, ir::reg(d), std::move(rhs)), ea));
   };
+  // Memory operand (ops[1]): base register in .phrase, byte offset in .addr.
+  auto mem_addr = [&]() -> ir::ExprPtr {
+    int base = insn.ops[1].phrase;
+    int64_t off = (int64_t)insn.ops[1].addr;
+    return off ? ir::binop(ir::BinOp::Add, ir::reg(base), ir::constant(off)) : ir::reg(base);
+  };
+  auto load_to = [&](int size) { blk.stmts.push_back(ir::assign(d, ir::load(mem_addr(), size), ea)); };
+  auto store_from = [&](int size) { blk.stmts.push_back(ir::store(mem_addr(), ir::reg(d), size, ea)); };
+  // Heuristic call arguments: contiguous arg regs r2.. set earlier in this block.
+  auto call_args = [&]() -> std::vector<ir::ExprPtr> {
+    std::set<int> defined;
+    for (const auto &st : blk.stmts)
+      if (st.kind == ir::StmtKind::Assign && st.dst_reg >= 2 && st.dst_reg <= 7)
+        defined.insert(st.dst_reg);
+    std::vector<ir::ExprPtr> args;
+    for (int r = 2; r <= 7 && defined.count(r); ++r) args.push_back(ir::reg(r));
+    return args;
+  };
 
   switch (insn.itype) {
     case mcore_movi: blk.stmts.push_back(ir::assign(d, ir::constant(imm), ea)); break;
@@ -68,6 +88,27 @@ void lift_insn(const insn_t &insn, ir::Block &blk) {
     case mcore_cmpne: setc(ir::BinOp::CmpNe, ir::reg(s)); break;
     case mcore_cmplti: setc(ir::BinOp::CmpLt, ir::constant(imm)); break;
     case mcore_cmpnei: setc(ir::BinOp::CmpNe, ir::constant(imm)); break;
+
+    // Memory: ops[0] = value/dest reg, ops[1] = (base, offset).
+    case mcore_ld:   load_to(4); break;
+    case mcore_ld_h: load_to(2); break;
+    case mcore_ld_b: load_to(1); break;
+    case mcore_st:   store_from(4); break;
+    case mcore_st_h: store_from(2); break;
+    case mcore_st_b: store_from(1); break;
+
+    // Calls: result in r2 (ABI).
+    case mcore_bsr: {
+      ea_t tgt = (ea_t)insn.ops[0].addr;
+      qstring nm;
+      if (get_name(&nm, tgt) <= 0 || nm.empty()) nm.sprnt("sub_%X", (unsigned)tgt);
+      blk.stmts.push_back(ir::assign(ir::kRegRet, ir::call(nm.c_str(), call_args()), ea));
+      break;
+    }
+    case mcore_jsr:
+      blk.stmts.push_back(
+          ir::assign(ir::kRegRet, ir::call_indirect(ir::reg(insn.ops[0].reg), call_args()), ea));
+      break;
 
     default: blk.stmts.push_back(lift_unknown((ea_t)ea)); break;
   }

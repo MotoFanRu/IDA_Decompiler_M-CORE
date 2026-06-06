@@ -20,10 +20,15 @@ void collect_regs(const ir::ExprPtr &e, std::vector<int> &out) {
   switch (e->kind) {
     case ir::ExprKind::Const: break;
     case ir::ExprKind::Reg: out.push_back(e->reg); break;
-    case ir::ExprKind::UnOp: collect_regs(e->a, out); break;
+    case ir::ExprKind::UnOp:
+    case ir::ExprKind::Load: collect_regs(e->a, out); break;
     case ir::ExprKind::BinOp:
       collect_regs(e->a, out);
       collect_regs(e->b, out);
+      break;
+    case ir::ExprKind::Call:
+      collect_regs(e->a, out);  // indirect target (if any)
+      for (const auto &arg : e->args) collect_regs(arg, out);
       break;
   }
 }
@@ -61,6 +66,7 @@ VarMap analyze(const ir::Function &fn) {
   for (const auto &b : fn.blocks) {
     for (const auto &s : b.stmts) {
       note_reads(s.expr);
+      note_reads(s.addr);  // Store address
       if (s.kind == ir::StmtKind::Assign) {
         used.insert(s.dst_reg);
         written.insert(s.dst_reg);

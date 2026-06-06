@@ -150,6 +150,46 @@ TEST("if-then structuring (max): cmplt + bf") {
   CHECK(!contains(c, "r100"));   // C bit fully inlined away
 }
 
+TEST("load renders as typed pointer dereference") {
+  ir::Function fn = one_block({ir::assign(2, ir::load(ir::reg(2), 4))}, ir::reg(2));
+  std::string c = decompile(std::move(fn));
+  CHECK(contains(c, "a1 = *(int *)(a1);"));
+  CHECK(contains(c, "return a1;"));
+}
+
+TEST("store renders as typed pointer assignment") {
+  ir::Function fn;
+  fn.name = "f";
+  fn.entry = 0;
+  ir::Block b;
+  b.entry = 0;
+  b.stmts.push_back(ir::store(ir::reg(2), ir::reg(3), 4));
+  b.term = ret_t(ir::reg(2));
+  fn.blocks.push_back(std::move(b));
+  std::string c = decompile(std::move(fn));
+  CHECK(contains(c, "*(int *)(a1) = a2;"));
+}
+
+TEST("byte load uses unsigned char pointer") {
+  ir::Function fn = one_block({ir::assign(2, ir::load(ir::reg(2), 1))}, ir::reg(2));
+  CHECK(contains(decompile(std::move(fn)), "*(unsigned char *)(a1)"));
+}
+
+TEST("call with args; result assigned") {
+  std::vector<ir::ExprPtr> args = {ir::reg(2)};
+  ir::Function fn = one_block({ir::assign(2, ir::call("g", args))}, ir::reg(2));
+  std::string c = decompile(std::move(fn));
+  CHECK(contains(c, "a1 = g(a1);"));
+  CHECK(contains(c, "return a1;"));
+}
+
+TEST("call with unused result is not eliminated") {
+  ir::Function fn = one_block({ir::assign(3, ir::call("g", {}))}, ir::constant(0));
+  std::string c = decompile(std::move(fn));
+  CHECK(contains(c, "g()"));     // side effect preserved
+  CHECK(contains(c, "return 0;"));
+}
+
 TEST("pre-test while loop structuring") {
   // B0: C = r2 < r3 ; bf B2(exit)    (stay in loop while a<b)
   // B1: r2 = r2 + 1 ; goto B0        (back edge)

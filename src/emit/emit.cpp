@@ -35,6 +35,14 @@ OpInfo binop_info(ir::BinOp op) {
 
 constexpr int kUnPrec = 14;
 
+const char *type_name(int size) {
+  switch (size) {
+    case 1: return "unsigned char";
+    case 2: return "unsigned short";
+    default: return "int";
+  }
+}
+
 std::string render(const ir::Expr &e, const vars::VarMap &vm, int min_prec) {
   switch (e.kind) {
     case ir::ExprKind::Const: { std::ostringstream os; os << e.value; return os.str(); }
@@ -51,8 +59,38 @@ std::string render(const ir::Expr &e, const vars::VarMap &vm, int min_prec) {
       std::string s = lhs + " " + oi.sym + " " + rhs;
       return oi.prec < min_prec ? "(" + s + ")" : s;
     }
+    case ir::ExprKind::Load: {
+      std::string s = "*(" + std::string(type_name(e.size)) + " *)(" +
+                      (e.a ? render(*e.a, vm, 0) : "") + ")";
+      return kUnPrec < min_prec ? "(" + s + ")" : s;
+    }
+    case ir::ExprKind::Call: {
+      std::string callee = !e.name.empty() ? e.name
+                           : e.a ? render(*e.a, vm, kUnPrec) : "sub";
+      std::string s = callee + "(";
+      for (size_t i = 0; i < e.args.size(); ++i) {
+        if (i) s += ", ";
+        s += render(*e.args[i], vm, 0);
+      }
+      return s + ")";
+    }
   }
   return "?";
+}
+
+// One statement as C text (no indent, no newline).
+std::string stmt_str(const ir::Stmt &s, const vars::VarMap &vm) {
+  switch (s.kind) {
+    case ir::StmtKind::Assign:
+      return vm.name_of(s.dst_reg) + " = " + (s.expr ? render(*s.expr, vm, 0) : "?") + ";";
+    case ir::StmtKind::Store:
+      return "*(" + std::string(type_name(s.size)) + " *)(" +
+             (s.addr ? render(*s.addr, vm, 0) : "") + ") = " +
+             (s.expr ? render(*s.expr, vm, 0) : "?") + ";";
+    case ir::StmtKind::Unknown:
+      return "// " + s.text;
+  }
+  return "";
 }
 
 ir::ExprPtr negate(const ir::ExprPtr &e) {
@@ -228,13 +266,8 @@ class Structurer {
   }
 
   void emit_stmts(int bi, int ind, std::ostringstream &os) {
-    for (const auto &s : fn_.blocks[bi].stmts) {
-      if (s.kind == ir::StmtKind::Assign)
-        os << ind_s(ind) << vm_.name_of(s.dst_reg) << " = "
-           << (s.expr ? render(*s.expr, vm_, 0) : "?") << ";\n";
-      else
-        os << ind_s(ind) << "// " << s.text << "\n";
-    }
+    for (const auto &s : fn_.blocks[bi].stmts)
+      os << ind_s(ind) << stmt_str(s, vm_) << "\n";
   }
 
   void emit_loop(int h, int ind, std::ostringstream &os) {
@@ -334,12 +367,8 @@ std::string emit_goto(const ir::Function &fn, const vars::VarMap &vm) {
     const ir::Block &b = fn.blocks[i];
     uint32_t next = i + 1 < fn.blocks.size() ? fn.blocks[i + 1].entry : 0xffffffff;
     if (targets.count(b.entry)) os << label(b.entry) << ":\n";
-    for (const auto &s : b.stmts) {
-      if (s.kind == ir::StmtKind::Assign)
-        os << "  " << vm.name_of(s.dst_reg) << " = " << (s.expr ? render(*s.expr, vm, 0) : "?") << ";\n";
-      else
-        os << "  // " << s.text << "\n";
-    }
+    for (const auto &s : b.stmts)
+      os << "  " << stmt_str(s, vm) << "\n";
     const ir::Terminator &t = b.term;
     switch (t.kind) {
       case ir::TermKind::Return:

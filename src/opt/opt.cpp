@@ -62,8 +62,24 @@ ir::ExprPtr rewrite(const ir::ExprPtr &e, const std::map<int, ir::ExprPtr> &defs
           return f;
       return ir::binop(e->binop, a, b);
     }
+    case ir::ExprKind::Load:
+      return ir::load(rewrite(e->a, defs), e->size);
+    case ir::ExprKind::Call: {
+      std::vector<ir::ExprPtr> args;
+      for (const auto &x : e->args) args.push_back(rewrite(x, defs));
+      return e->a ? ir::call_indirect(rewrite(e->a, defs), std::move(args))
+                  : ir::call(e->name, std::move(args));
+    }
   }
   return e;
+}
+
+bool has_call(const ir::ExprPtr &e) {
+  if (!e) return false;
+  if (e->kind == ir::ExprKind::Call) return true;
+  if (e->kind == ir::ExprKind::Load || e->kind == ir::ExprKind::UnOp) return has_call(e->a);
+  if (e->kind == ir::ExprKind::BinOp) return has_call(e->a) || has_call(e->b);
+  return false;
 }
 
 // Replace Reg(kRegC) with the condition value computed in this block.
@@ -74,6 +90,8 @@ ir::ExprPtr subst_c(const ir::ExprPtr &e, const ir::ExprPtr &c) {
     case ir::ExprKind::Reg:   return (e->reg == ir::kRegC && c) ? c : e;
     case ir::ExprKind::UnOp:  return ir::unop(e->unop, subst_c(e->a, c));
     case ir::ExprKind::BinOp: return ir::binop(e->binop, subst_c(e->a, c), subst_c(e->b, c));
+    case ir::ExprKind::Load:  return ir::load(subst_c(e->a, c), e->size);
+    case ir::ExprKind::Call:  return e;  // C-bit never flows into call args here
   }
   return e;
 }
@@ -101,8 +119,13 @@ void count_reads(const ir::ExprPtr &e, std::map<int, int> &reads) {
   switch (e->kind) {
     case ir::ExprKind::Const: break;
     case ir::ExprKind::Reg: reads[e->reg]++; break;
-    case ir::ExprKind::UnOp: count_reads(e->a, reads); break;
+    case ir::ExprKind::UnOp:
+    case ir::ExprKind::Load: count_reads(e->a, reads); break;
     case ir::ExprKind::BinOp: count_reads(e->a, reads); count_reads(e->b, reads); break;
+    case ir::ExprKind::Call:
+      count_reads(e->a, reads);
+      for (const auto &x : e->args) count_reads(x, reads);
+      break;
   }
 }
 
@@ -115,8 +138,14 @@ void simplify(ir::Function &fn) {
     ir::ExprPtr c_value;               // last value assigned to the C bit
 
     for (auto &s : b.stmts) {
+      if (s.kind == ir::StmtKind::Store) {
+        s.addr = rewrite(s.addr, cprop);
+        s.expr = rewrite(s.expr, cprop);
+        continue;
+      }
       if (s.kind != ir::StmtKind::Assign) { cprop.clear(); continue; }
       s.expr = rewrite(s.expr, cprop);
+      if (has_call(s.expr)) cprop.clear();  // a call clobbers caller-saved regs
       if (s.dst_reg == ir::kRegC) {
         c_value = s.expr;
       } else if (is_const(s.expr)) {
@@ -135,8 +164,10 @@ void simplify(ir::Function &fn) {
   // analysis; in particular the inlined C-bit compare becomes unread and drops.
   std::map<int, int> reads;
   for (auto &b : fn.blocks) {
-    for (auto &s : b.stmts)
-      if (s.kind == ir::StmtKind::Assign) count_reads(s.expr, reads);
+    for (auto &s : b.stmts) {
+      count_reads(s.expr, reads);   // Assign rhs / Store value
+      count_reads(s.addr, reads);   // Store address
+    }
     count_reads(b.term.cond, reads);
     count_reads(b.term.value, reads);
   }
@@ -144,7 +175,8 @@ void simplify(ir::Function &fn) {
     std::vector<ir::Stmt> kept;
     kept.reserve(b.stmts.size());
     for (auto &s : b.stmts) {
-      if (s.kind == ir::StmtKind::Assign && reads[s.dst_reg] == 0)
+      // Drop only dead register assignments; keep stores and calls (side effects).
+      if (s.kind == ir::StmtKind::Assign && reads[s.dst_reg] == 0 && !has_call(s.expr))
         continue;
       kept.push_back(std::move(s));
     }

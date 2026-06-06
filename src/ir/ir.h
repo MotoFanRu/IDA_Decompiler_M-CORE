@@ -21,7 +21,7 @@ inline constexpr int kRegRet = 2;   // r2 holds the return value (ABI)
 inline constexpr int kRegLR = 15;   // r15 link register
 inline constexpr int kRegC = 100;   // synthetic 1-bit condition (PSR C bit)
 
-enum class ExprKind { Const, Reg, BinOp, UnOp };
+enum class ExprKind { Const, Reg, BinOp, UnOp, Load, Call };
 
 enum class BinOp {
   Add, Sub, Mul,
@@ -41,7 +41,10 @@ struct Expr {
   int reg = 0;              // Reg
   BinOp binop{};            // BinOp
   UnOp unop{};              // UnOp
-  ExprPtr a, b;             // operands
+  ExprPtr a, b;             // operands (Load: a=address; Call: a=indirect target)
+  int size = 0;             // Load access size in bytes
+  std::string name;         // Call: target name (direct call)
+  std::vector<ExprPtr> args;// Call arguments
 };
 
 inline ExprPtr constant(int64_t v) {
@@ -71,22 +74,48 @@ inline ExprPtr unop(UnOp op, ExprPtr a) {
   e->a = std::move(a);
   return e;
 }
+inline ExprPtr load(ExprPtr addr, int size) {
+  auto e = std::make_shared<Expr>();
+  e->kind = ExprKind::Load;
+  e->a = std::move(addr);
+  e->size = size;
+  return e;
+}
+inline ExprPtr call(std::string name, std::vector<ExprPtr> args) {
+  auto e = std::make_shared<Expr>();
+  e->kind = ExprKind::Call;
+  e->name = std::move(name);
+  e->args = std::move(args);
+  return e;
+}
+inline ExprPtr call_indirect(ExprPtr target, std::vector<ExprPtr> args) {
+  auto e = std::make_shared<Expr>();
+  e->kind = ExprKind::Call;
+  e->a = std::move(target);
+  e->args = std::move(args);
+  return e;
+}
 
-enum class StmtKind { Assign, Unknown };
+enum class StmtKind { Assign, Store, Unknown };
 
 struct Stmt {
   StmtKind kind;
   int dst_reg = 0;          // Assign
-  ExprPtr expr;             // Assign rhs
+  ExprPtr expr;             // Assign rhs / Store value
+  ExprPtr addr;             // Store address
+  int size = 4;             // Store access size in bytes
   uint32_t ea = 0;          // source address
   std::string text;         // Unknown: disassembly text
 };
 
 inline Stmt assign(int dst, ExprPtr e, uint32_t ea = 0) {
-  return Stmt{StmtKind::Assign, dst, std::move(e), ea, {}};
+  return Stmt{StmtKind::Assign, dst, std::move(e), nullptr, 4, ea, {}};
+}
+inline Stmt store(ExprPtr addr, ExprPtr value, int size, uint32_t ea = 0) {
+  return Stmt{StmtKind::Store, 0, std::move(value), std::move(addr), size, ea, {}};
 }
 inline Stmt unknown(uint32_t ea, std::string text) {
-  return Stmt{StmtKind::Unknown, 0, nullptr, ea, std::move(text)};
+  return Stmt{StmtKind::Unknown, 0, nullptr, nullptr, 4, ea, std::move(text)};
 }
 
 enum class TermKind {
