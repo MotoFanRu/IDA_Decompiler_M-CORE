@@ -124,7 +124,7 @@ plugmod_t *idaapi init() {
 
 plugin_t PLUGIN = {
   IDP_INTERFACE_VERSION,
-  PLUGIN_MULTI,                 // init() returns a plugmod_t; term/run are null
+  PLUGIN_MULTI | PLUGIN_FIX,     // load at startup so the F5 action is ready
   init,
   nullptr,                      // term  (must be null for PLUGIN_MULTI)
   nullptr,                      // run   (must be null for PLUGIN_MULTI)
