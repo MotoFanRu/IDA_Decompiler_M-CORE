@@ -15,4 +15,8 @@ void recover_stack(ir::Function &fn);
 // Simplify `fn` in place.
 void simplify(ir::Function &fn);
 
+// Readability pass: copy/constant propagation, single-use inlining of pure
+// temporaries, and liveness-based dead-store elimination. Run after simplify().
+void inline_locals(ir::Function &fn);
+
 } // namespace opt

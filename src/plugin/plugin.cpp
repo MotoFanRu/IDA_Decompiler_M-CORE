@@ -31,6 +31,7 @@ qstring decompile_text(func_t *pfn) {
   opt::recover_stack(fn);
   vars::VarMap vm = vars::analyze(fn);
   opt::simplify(fn);
+  opt::inline_locals(fn);
   std::string c = emit::emit_c(fn, vm);
   return qstring(c.c_str());
 }

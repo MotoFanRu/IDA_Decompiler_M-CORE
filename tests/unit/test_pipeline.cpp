@@ -19,6 +19,7 @@ std::string decompile(ir::Function fn) {
   opt::recover_stack(fn);
   vars::VarMap vm = vars::analyze(fn);
   opt::simplify(fn);
+  opt::inline_locals(fn);
   return emit::emit_c(fn, vm);
 }
 
@@ -221,6 +222,37 @@ TEST("large constant renders hex, small decimal") {
   CHECK(emit::emit_expr(*ir::constant(-1), vm) == "-1");
 }
 
+TEST("single-use temporary is inlined") {
+  // v_tmp = a + b ; return v_tmp   ->   return a1 + a2;
+  std::vector<ir::Stmt> stmts;
+  stmts.push_back(ir::assign(4, ir::binop(ir::BinOp::Add, ir::reg(2), ir::reg(3))));
+  ir::Function fn = one_block(std::move(stmts), ir::reg(4));
+  std::string c = decompile(std::move(fn));
+  CHECK(contains(c, "return a1 + a2;"));
+  CHECK(!contains(c, "v1"));   // temporary eliminated
+}
+
+TEST("dead overwriting store is removed") {
+  // r4 = 81 ; r4 = a1 + 1 ; return r4   (first def is dead)
+  std::vector<ir::Stmt> stmts;
+  stmts.push_back(ir::assign(4, ir::constant(81)));
+  stmts.push_back(ir::assign(4, ir::binop(ir::BinOp::Add, ir::reg(2), ir::constant(1))));
+  ir::Function fn = one_block(std::move(stmts), ir::reg(4));
+  std::string c = decompile(std::move(fn));
+  CHECK(!contains(c, "81"));            // dead 'r4 = 81' gone
+  CHECK(contains(c, "return a1 + 1;")); // inlined
+}
+
+TEST("multi-use arithmetic is NOT duplicated") {
+  // v = a + b (used twice): keep as a statement, do not inline twice
+  std::vector<ir::Stmt> stmts;
+  stmts.push_back(ir::assign(4, ir::binop(ir::BinOp::Add, ir::reg(2), ir::reg(3))));
+  stmts.push_back(ir::store(ir::reg(5), ir::reg(4), 4));  // use 1
+  ir::Function fn = one_block(std::move(stmts), ir::reg(4));  // use 2 (return)
+  std::string c = decompile(std::move(fn));
+  CHECK(contains(c, "v1 = a1 + a2;"));   // kept once
+}
+
 TEST("cross-block C-bit resolves in a later block's branch") {
   // B0: C = r2 < r3 ; fallthrough B1
   // B1: bt B3        ; fallthrough B2   (branch reads C set in B0)
@@ -251,21 +283,20 @@ TEST("cross-block C-bit resolves in a later block's branch") {
 }
 
 TEST("stack frame recovery: prologue/epilogue hidden, slot named") {
-  // sp=sp-16 ; *(sp+8)=lr ; *(sp)=a1 ; r3=*(sp) ; lr=*(sp+8) ; sp=sp+16 ; return r3
+  // sp=sp-16 ; *(sp+12)=lr ; r2=*(sp+20)(incoming stack arg) ; lr=*(sp+12) ; sp=sp+16 ; return r2
   std::vector<ir::Stmt> stmts;
   stmts.push_back(ir::assign(0, ir::binop(ir::BinOp::Sub, ir::reg(0), ir::constant(16))));
-  stmts.push_back(ir::store(ir::binop(ir::BinOp::Add, ir::reg(0), ir::constant(8)), ir::reg(15), 4));
-  stmts.push_back(ir::store(ir::reg(0), ir::reg(2), 4));
-  stmts.push_back(ir::assign(3, ir::load(ir::reg(0), 4)));
-  stmts.push_back(ir::assign(15, ir::load(ir::binop(ir::BinOp::Add, ir::reg(0), ir::constant(8)), 4)));
+  stmts.push_back(ir::store(ir::binop(ir::BinOp::Add, ir::reg(0), ir::constant(12)), ir::reg(15), 4));
+  stmts.push_back(ir::assign(2, ir::load(ir::binop(ir::BinOp::Add, ir::reg(0), ir::constant(20)), 4)));
+  stmts.push_back(ir::assign(15, ir::load(ir::binop(ir::BinOp::Add, ir::reg(0), ir::constant(12)), 4)));
   stmts.push_back(ir::assign(0, ir::binop(ir::BinOp::Add, ir::reg(0), ir::constant(16))));
-  ir::Function fn = one_block(std::move(stmts), ir::reg(3));
+  ir::Function fn = one_block(std::move(stmts), ir::reg(2));
 
   std::string c = decompile(std::move(fn));
-  CHECK(!contains(c, "sp"));        // no stack-pointer juggling
-  CHECK(!contains(c, "lr"));        // no link-register save/restore
-  CHECK(contains(c, "var_0 = a1;"));
-  CHECK(contains(c, "int f(int a1)"));
+  CHECK(!contains(c, "sp"));         // no stack-pointer juggling
+  CHECK(!contains(c, "lr"));         // no link-register save/restore
+  CHECK(contains(c, "var_14"));      // stack slot (offset 20) named
+  CHECK(contains(c, "return var_14;"));
 }
 
 TEST("pre-test while loop structuring") {

@@ -2,7 +2,9 @@
 
 #include "ir/ir.h"
 
+#include <algorithm>
 #include <map>
+#include <set>
 #include <vector>
 
 namespace opt {
@@ -275,6 +277,125 @@ void simplify(ir::Function &fn) {
       kept.push_back(std::move(s));
     }
     b.stmts = std::move(kept);
+  }
+}
+
+namespace {
+
+bool uses_reg(const ir::ExprPtr &e, int reg) {
+  if (!e) return false;
+  if (e->kind == ir::ExprKind::Reg) return e->reg == reg;
+  if (uses_reg(e->a, reg) || uses_reg(e->b, reg)) return true;
+  for (const auto &x : e->args) if (uses_reg(x, reg)) return true;
+  return false;
+}
+
+void reads_set(const ir::ExprPtr &e, std::set<int> &s) {
+  if (!e) return;
+  if (e->kind == ir::ExprKind::Reg) s.insert(e->reg);
+  reads_set(e->a, s);
+  reads_set(e->b, s);
+  for (const auto &x : e->args) reads_set(x, s);
+}
+
+// May a definition with `usecount` total uses be substituted into its uses?
+bool propagatable(const ir::ExprPtr &e, int usecount) {
+  if (!e) return false;
+  switch (e->kind) {
+    case ir::ExprKind::Const:
+    case ir::ExprKind::Reg: return true;            // copy/const: any number of uses
+    case ir::ExprKind::Cast: return propagatable(e->a, usecount);
+    case ir::ExprKind::UnOp:
+    case ir::ExprKind::BinOp: return usecount == 1; // pure arithmetic: single use only
+    case ir::ExprKind::Load:
+    case ir::ExprKind::Call: return false;          // side effects / ordering
+  }
+  return false;
+}
+
+ir::ExprPtr subst_inline(const ir::ExprPtr &e, const std::map<int, ir::ExprPtr> &defs) {
+  if (!e) return e;
+  switch (e->kind) {
+    case ir::ExprKind::Reg: {
+      auto it = defs.find(e->reg);
+      return it != defs.end() ? it->second : e;
+    }
+    case ir::ExprKind::BinOp: return ir::binop(e->binop, subst_inline(e->a, defs), subst_inline(e->b, defs));
+    case ir::ExprKind::UnOp:  return ir::unop(e->unop, subst_inline(e->a, defs));
+    case ir::ExprKind::Cast:  return ir::cast(e->size, e->is_signed, subst_inline(e->a, defs));
+    case ir::ExprKind::Load:  return ir::load(subst_inline(e->a, defs), e->size);
+    case ir::ExprKind::Call: {
+      std::vector<ir::ExprPtr> args;
+      for (const auto &x : e->args) args.push_back(subst_inline(x, defs));
+      return e->a ? ir::call_indirect(subst_inline(e->a, defs), std::move(args))
+                  : ir::call(e->name, std::move(args));
+    }
+    default: return e;
+  }
+}
+
+} // namespace
+
+void inline_locals(ir::Function &fn) {
+  // Total use counts (reads) per register across the function.
+  std::map<int, int> uses;
+  for (auto &b : fn.blocks) {
+    for (auto &s : b.stmts) { count_reads(s.expr, uses); count_reads(s.addr, uses); }
+    count_reads(b.term.cond, uses);
+    count_reads(b.term.value, uses);
+  }
+
+  // Forward intra-block propagation / single-use inlining.
+  for (auto &b : fn.blocks) {
+    std::map<int, ir::ExprPtr> defs;
+    for (auto &s : b.stmts) {
+      if (s.kind == ir::StmtKind::Store) {
+        s.addr = subst_inline(s.addr, defs);
+        s.expr = subst_inline(s.expr, defs);
+        continue;
+      }
+      if (s.kind != ir::StmtKind::Assign) { defs.clear(); continue; }
+      s.expr = subst_inline(s.expr, defs);
+      // A redefinition invalidates defs that referenced the old value.
+      for (auto it = defs.begin(); it != defs.end();)
+        it = (it->first == s.dst_reg || uses_reg(it->second, s.dst_reg)) ? defs.erase(it) : ++it;
+      if (s.dst_reg != ir::kRegC && propagatable(s.expr, uses[s.dst_reg]))
+        defs[s.dst_reg] = s.expr;
+    }
+    b.term.cond = subst_inline(b.term.cond, defs);
+    b.term.value = subst_inline(b.term.value, defs);
+  }
+
+  // Liveness-based dead-store elimination. live-out of a block over-approximates
+  // as registers read by any other block's statements/terminator.
+  int n = (int)fn.blocks.size();
+  std::vector<std::set<int>> reads_in(n);
+  for (int i = 0; i < n; ++i) {
+    for (auto &s : fn.blocks[i].stmts) { reads_set(s.expr, reads_in[i]); reads_set(s.addr, reads_in[i]); }
+    reads_set(fn.blocks[i].term.cond, reads_in[i]);
+    reads_set(fn.blocks[i].term.value, reads_in[i]);
+  }
+  for (int i = 0; i < n; ++i) {
+    std::set<int> live;
+    for (int j = 0; j < n; ++j) if (j != i) live.insert(reads_in[j].begin(), reads_in[j].end());
+    reads_set(fn.blocks[i].term.cond, live);
+    reads_set(fn.blocks[i].term.value, live);
+
+    std::vector<ir::Stmt> rev;
+    auto &stmts = fn.blocks[i].stmts;
+    for (auto it = stmts.rbegin(); it != stmts.rend(); ++it) {
+      ir::Stmt &s = *it;
+      if (s.kind == ir::StmtKind::Assign && s.dst_reg != ir::kRegC && !has_call(s.expr) &&
+          live.find(s.dst_reg) == live.end()) {
+        continue;  // dead store
+      }
+      if (s.kind == ir::StmtKind::Assign) live.erase(s.dst_reg);
+      reads_set(s.expr, live);
+      reads_set(s.addr, live);
+      rev.push_back(std::move(s));
+    }
+    std::reverse(rev.begin(), rev.end());
+    stmts = std::move(rev);
   }
 }
 
