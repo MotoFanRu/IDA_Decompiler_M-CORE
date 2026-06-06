@@ -405,6 +405,56 @@ void simplify(ir::Function &fn) {
   }
 }
 
+void fold_implied_branches(ir::Function &fn) {
+  int n = (int)fn.blocks.size();
+  bool changed = true;
+  while (changed) {
+    changed = false;
+    std::map<uint32_t, int> idx;
+    for (int i = 0; i < n; ++i) idx[fn.blocks[i].entry] = i;
+    std::vector<std::vector<int>> preds(n);
+    for (int i = 0; i < n; ++i) {
+      const ir::Terminator &t = fn.blocks[i].term;
+      auto add = [&](uint32_t ea) {
+        auto it = idx.find(ea);
+        if (it != idx.end()) preds[it->second].push_back(i);
+      };
+      if (t.kind == ir::TermKind::Goto || t.kind == ir::TermKind::Fallthrough) add(t.target);
+      if (t.kind == ir::TermKind::CondBranch) { add(t.target); add(t.fallthrough); }
+    }
+
+    for (int bi = 0; bi < n; ++bi) {
+      ir::Terminator &bt = fn.blocks[bi].term;
+      if (bt.kind != ir::TermKind::CondBranch) continue;
+      if (preds[bi].size() != 1) continue;  // condition's truth must be unique here
+      const ir::Terminator &pt = fn.blocks[preds[bi][0]].term;
+      if (pt.kind != ir::TermKind::CondBranch) continue;
+      if (!expr_equal(bt.cond, pt.cond)) continue;  // same test as the predecessor's
+
+      // The block must not recompute the tested values between entry and branch.
+      std::map<int, int> rd;
+      count_reads(bt.cond, rd);
+      bool rewritten = false;
+      for (const auto &s : fn.blocks[bi].stmts)
+        if (s.kind == ir::StmtKind::Assign && rd.count(s.dst_reg)) rewritten = true;
+      if (rewritten) continue;
+
+      bool via_taken = pt.target == fn.blocks[bi].entry;
+      bool via_fth = pt.fallthrough == fn.blocks[bi].entry;
+      if (via_taken == via_fth) continue;  // ambiguous (both edges, or neither)
+
+      // Reached on the predecessor's taken edge => the same test is true here, so
+      // this branch always goes to its own taken target (and vice versa).
+      ir::Terminator g;
+      g.kind = ir::TermKind::Goto;
+      g.target = via_taken ? bt.target : bt.fallthrough;
+      g.ea = bt.ea;
+      fn.blocks[bi].term = g;
+      changed = true;
+    }
+  }
+}
+
 namespace {
 
 void reads_set(const ir::ExprPtr &e, std::set<int> &s) {

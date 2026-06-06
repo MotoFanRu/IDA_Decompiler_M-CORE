@@ -21,6 +21,7 @@ std::string decompile(ir::Function fn) {
   opt::split_ranges(fn);
   vars::VarMap vm = vars::analyze(fn);
   opt::simplify(fn);
+  opt::fold_implied_branches(fn);
   opt::inline_locals(fn);
   return emit::emit_c(fn, vm);
 }
@@ -172,6 +173,39 @@ TEST("store renders as typed pointer assignment") {
   fn.blocks.push_back(std::move(b));
   std::string c = decompile(std::move(fn));
   CHECK(contains(c, "*(int *)(a1) = a2;"));
+}
+
+TEST("redundant nested identical if is collapsed") {
+  // Two blocks test the same condition (v4 == 0) and branch to the same merge;
+  // reaching the second means the first was false, so its branch is dead. The
+  // structurer would otherwise nest if (v4 != 0) { if (v4 != 0) { body } }.
+  auto cond = [] { return ir::binop(ir::BinOp::CmpEq, ir::reg(4), ir::constant(0)); };
+  ir::Function fn;
+  fn.name = "f";
+  fn.entry = 0;
+  ir::Block b0;
+  b0.entry = 0;
+  b0.stmts.push_back(ir::assign(4, ir::load(ir::reg(5), 4)));
+  b0.term = cbr_t(cond(), 3, 1);  // taken -> merge (when v4==0), else B1
+  ir::Block b1;
+  b1.entry = 1;
+  b1.term = cbr_t(cond(), 3, 2);  // identical test
+  ir::Block b2;
+  b2.entry = 2;
+  b2.stmts.push_back(ir::assign(2, ir::constant(7)));
+  b2.term = goto_t(3);
+  ir::Block b3;
+  b3.entry = 3;
+  b3.term = ret_t(ir::reg(2));
+  fn.blocks.push_back(std::move(b0));
+  fn.blocks.push_back(std::move(b1));
+  fn.blocks.push_back(std::move(b2));
+  fn.blocks.push_back(std::move(b3));
+  std::string c = decompile(std::move(fn));
+  size_t ifs = 0;
+  for (size_t p = c.find("if ("); p != std::string::npos; p = c.find("if (", p + 1)) ++ifs;
+  CHECK(ifs == 1);              // only one guard survives
+  CHECK(contains(c, "= 7"));    // the guarded body is still emitted
 }
 
 TEST("sp-relative address becomes &var_N") {

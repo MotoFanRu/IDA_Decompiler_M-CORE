@@ -39,6 +39,7 @@ qstring decompile_text(func_t *pfn) {
   opt::split_ranges(fn);  // separate distinct values sharing a register
   vars::VarMap vm = vars::analyze(fn);
   opt::simplify(fn);
+  opt::fold_implied_branches(fn);  // drop branches the predecessor already decided
   opt::inline_locals(fn);
   std::string c = emit::emit_c(fn, vm);
   return qstring(c.c_str());

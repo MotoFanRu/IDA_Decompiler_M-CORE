@@ -30,6 +30,11 @@ void split_ranges(ir::Function &fn);
 // Simplify `fn` in place.
 void simplify(ir::Function &fn);
 
+// Fold conditional branches whose test is already decided by the (single)
+// predecessor's identical test: `if (C) { if (C) { S } }` -> `if (C) { S }`.
+// Run after simplify() (so the C bit is substituted into the conditions).
+void fold_implied_branches(ir::Function &fn);
+
 // Readability pass: copy/constant propagation, single-use inlining of pure
 // temporaries, and liveness-based dead-store elimination. Run after simplify().
 void inline_locals(ir::Function &fn);
