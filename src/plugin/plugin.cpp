@@ -92,22 +92,21 @@ struct mcore_plugmod_t : public plugmod_t {
   ~mcore_plugmod_t() override { unregister_action(kActionName); }
 
   bool idaapi run(size_t arg) override {
-    // arg != 0: decompile only the function at/containing that address (used by
-    // the evaluation harness). arg == 0: decompile every function.
-    // Unique markers let headless tooling extract pseudocode from the log.
+    // arg != 0: decompile the function at that address with markers (headless
+    // tooling / eval harness). arg == 0: interactive — decompile the function
+    // under the cursor (same as the F5 action).
     if (arg != 0) {
       if (func_t *pfn = get_func((ea_t)arg))
         msg(">>>MCORE_FUNC %a\n%s<<<MCORE_END\n", pfn->start_ea,
             decompile_text(pfn).c_str());
       return true;
     }
-    size_t qty = get_func_qty();
-    msg("[mcore-decompiler] run: %zu function(s)\n", qty);
-    for (size_t i = 0; i < qty; ++i) {
-      func_t *pfn = getn_func(i);
-      msg(">>>MCORE_FUNC %a\n%s<<<MCORE_END\n", pfn->start_ea,
-          decompile_text(pfn).c_str());
+    func_t *pfn = get_func(get_screen_ea());
+    if (pfn == nullptr) {
+      msg("[mcore-decompiler] place the cursor inside a function (or press F5).\n");
+      return false;
     }
+    show_pseudocode(pfn);
     return true;
   }
 };

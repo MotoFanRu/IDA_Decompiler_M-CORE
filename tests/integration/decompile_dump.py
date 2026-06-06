@@ -25,5 +25,7 @@ if ida_funcs.get_func_qty() == 0:
     ida_funcs.add_func(start, end)
 ida_auto.auto_wait()
 
-ida_loader.load_and_run_plugin("mcore_decompiler", 0)
+# Decompile each function by address (arg != 0 prints the >>>MCORE_FUNC markers).
+for i in range(ida_funcs.get_func_qty()):
+    ida_loader.load_and_run_plugin("mcore_decompiler", ida_funcs.getn_func(i).start_ea)
 ida_pro.qexit(0)
