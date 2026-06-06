@@ -25,7 +25,7 @@ if ida_funcs.get_func_qty() == 0:
     ida_funcs.add_func(start, end)
 ida_auto.auto_wait()
 
-# Decompile each function by address (arg != 0 prints the >>>MCORE_FUNC markers).
-for i in range(ida_funcs.get_func_qty()):
-    ida_loader.load_and_run_plugin("mcore_decompiler", ida_funcs.getn_func(i).start_ea)
+# arg = SIZE_MAX -> decompile every function with the >>>MCORE_FUNC markers
+# (works even when a fixture function starts at address 0).
+ida_loader.load_and_run_plugin("mcore_decompiler", 0xFFFFFFFFFFFFFFFF)
 ida_pro.qexit(0)

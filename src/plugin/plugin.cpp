@@ -92,13 +92,18 @@ struct mcore_plugmod_t : public plugmod_t {
   ~mcore_plugmod_t() override { unregister_action(kActionName); }
 
   bool idaapi run(size_t arg) override {
-    // arg != 0: decompile the function at that address with markers (headless
-    // tooling / eval harness). arg == 0: interactive — decompile the function
-    // under the cursor (same as the F5 action).
+    // arg == SIZE_MAX: every function, with markers (eval/test harness).
+    // arg != 0: the function at that address, with markers (harness, per-ea).
+    // arg == 0: interactive — the function under the cursor (same as F5).
+    auto dump = [](func_t *p) {
+      msg(">>>MCORE_FUNC %a\n%s<<<MCORE_END\n", p->start_ea, decompile_text(p).c_str());
+    };
+    if (arg == (size_t)-1) {
+      for (size_t i = 0, qty = get_func_qty(); i < qty; ++i) dump(getn_func(i));
+      return true;
+    }
     if (arg != 0) {
-      if (func_t *pfn = get_func((ea_t)arg))
-        msg(">>>MCORE_FUNC %a\n%s<<<MCORE_END\n", pfn->start_ea,
-            decompile_text(pfn).c_str());
+      if (func_t *pfn = get_func((ea_t)arg)) dump(pfn);
       return true;
     }
     func_t *pfn = get_func(get_screen_ea());
