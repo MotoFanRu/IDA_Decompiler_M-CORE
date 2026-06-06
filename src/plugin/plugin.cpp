@@ -26,8 +26,9 @@ qstring decompile_text(func_t *pfn) {
     r += err;
     return r;
   }
-  // Recover variables before the optimizer rewrites/removes assignments, so
-  // input (parameter) detection is accurate.
+  // Recover the stack frame first (sp slots -> locals, drop prologue/epilogue),
+  // then recover variables (before the optimizer rewrites/removes assignments).
+  opt::recover_stack(fn);
   vars::VarMap vm = vars::analyze(fn);
   opt::simplify(fn);
   std::string c = emit::emit_c(fn, vm);

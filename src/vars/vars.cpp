@@ -3,6 +3,7 @@
 #include "ir/ir.h"
 
 #include <algorithm>
+#include <cstdio>
 #include <set>
 
 namespace vars {
@@ -83,10 +84,17 @@ VarMap analyze(const ir::Function &fn) {
   for (size_t i = 0; i < vm.params.size(); ++i)
     vm.name[vm.params[i]] = "a" + std::to_string(i + 1);
 
-  // Locals: remaining used GP registers (not params, not sp/lr), numbered v1..
+  // Locals: stack slots -> var_<off>; remaining used GP registers -> v1..
   int local_n = 0;
   for (int r : used) {  // std::set => ascending, deterministic
-    if (vm.name.count(r) || !is_gp_reg(r)) continue;  // skip params, C, control regs
+    if (vm.name.count(r)) continue;  // already a param
+    if (r >= ir::kStackBase) {
+      char buf[32];
+      std::snprintf(buf, sizeof(buf), "var_%X", r - ir::kStackBase);
+      vm.name[r] = buf;
+      continue;
+    }
+    if (!is_gp_reg(r)) continue;  // skip C bit / control regs
     if (r == ir::kRegSP) { vm.name[r] = "sp"; continue; }
     if (r == ir::kRegLR) { vm.name[r] = "lr"; continue; }
     vm.name[r] = "v" + std::to_string(++local_n);

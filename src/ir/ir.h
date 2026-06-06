@@ -20,6 +20,7 @@ inline constexpr int kRegSP = 0;    // r0
 inline constexpr int kRegRet = 2;   // r2 holds the return value (ABI)
 inline constexpr int kRegLR = 15;   // r15 link register
 inline constexpr int kRegC = 100;   // synthetic 1-bit condition (PSR C bit)
+inline constexpr int kStackBase = 0x40000;  // stack slots: kStackBase + byte offset
 
 enum class ExprKind { Const, Reg, BinOp, UnOp, Load, Call, Cast };
 

@@ -7,6 +7,11 @@ namespace ir { struct Function; }
 
 namespace opt {
 
+// Recover the stack frame: turn sp-relative loads/stores into named stack-slot
+// variables and drop prologue/epilogue boilerplate (sp adjustments, lr save/
+// restore, stm/ldm register save/restore). Run before simplify().
+void recover_stack(ir::Function &fn);
+
 // Simplify `fn` in place.
 void simplify(ir::Function &fn);
 

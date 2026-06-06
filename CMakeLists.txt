@@ -17,6 +17,7 @@ add_library(mcore_decompiler SHARED
   src/lifter/lifter.cpp
   src/vars/vars.cpp
   src/opt/opt.cpp
+  src/opt/stackframe.cpp
   src/emit/emit.cpp
 )
 target_include_directories(mcore_decompiler PRIVATE
@@ -52,6 +53,7 @@ add_executable(unit_tests
   tests/unit/test_pipeline.cpp
   src/vars/vars.cpp
   src/opt/opt.cpp
+  src/opt/stackframe.cpp
   src/emit/emit.cpp
 )
 target_include_directories(unit_tests PRIVATE

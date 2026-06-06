@@ -16,6 +16,7 @@ bool contains(const std::string &hay, const std::string &needle) {
 }
 
 std::string decompile(ir::Function fn) {
+  opt::recover_stack(fn);
   vars::VarMap vm = vars::analyze(fn);
   opt::simplify(fn);
   return emit::emit_c(fn, vm);
@@ -218,6 +219,24 @@ TEST("large constant renders hex, small decimal") {
   CHECK(emit::emit_expr(*ir::constant(0x1000), vm) == "0x1000");
   CHECK(emit::emit_expr(*ir::constant(42), vm) == "42");
   CHECK(emit::emit_expr(*ir::constant(-1), vm) == "-1");
+}
+
+TEST("stack frame recovery: prologue/epilogue hidden, slot named") {
+  // sp=sp-16 ; *(sp+8)=lr ; *(sp)=a1 ; r3=*(sp) ; lr=*(sp+8) ; sp=sp+16 ; return r3
+  std::vector<ir::Stmt> stmts;
+  stmts.push_back(ir::assign(0, ir::binop(ir::BinOp::Sub, ir::reg(0), ir::constant(16))));
+  stmts.push_back(ir::store(ir::binop(ir::BinOp::Add, ir::reg(0), ir::constant(8)), ir::reg(15), 4));
+  stmts.push_back(ir::store(ir::reg(0), ir::reg(2), 4));
+  stmts.push_back(ir::assign(3, ir::load(ir::reg(0), 4)));
+  stmts.push_back(ir::assign(15, ir::load(ir::binop(ir::BinOp::Add, ir::reg(0), ir::constant(8)), 4)));
+  stmts.push_back(ir::assign(0, ir::binop(ir::BinOp::Add, ir::reg(0), ir::constant(16))));
+  ir::Function fn = one_block(std::move(stmts), ir::reg(3));
+
+  std::string c = decompile(std::move(fn));
+  CHECK(!contains(c, "sp"));        // no stack-pointer juggling
+  CHECK(!contains(c, "lr"));        // no link-register save/restore
+  CHECK(contains(c, "var_0 = a1;"));
+  CHECK(contains(c, "int f(int a1)"));
 }
 
 TEST("pre-test while loop structuring") {
