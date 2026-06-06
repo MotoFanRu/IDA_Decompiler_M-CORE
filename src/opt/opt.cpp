@@ -79,12 +79,18 @@ bool uses_reg(const ir::ExprPtr &e, int reg) {
 
 void simplify(ir::Function &fn) {
   // Forward const/copy propagation + folding.
+  // Only constants are propagated (always sound, no liveness needed). Copy and
+  // compound-expression propagation require interference analysis and arrive in
+  // a later milestone; until then non-constant defs are emitted as statements.
   std::map<int, ir::ExprPtr> defs;
   for (auto &s : fn.stmts) {
     switch (s.kind) {
       case ir::StmtKind::Assign:
         s.expr = rewrite(s.expr, defs);
-        defs[s.dst_reg] = s.expr;
+        if (s.expr && s.expr->kind == ir::ExprKind::Const)
+          defs[s.dst_reg] = s.expr;
+        else
+          defs.erase(s.dst_reg);
         break;
       case ir::StmtKind::Return:
         s.expr = rewrite(s.expr, defs);

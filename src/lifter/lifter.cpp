@@ -47,13 +47,39 @@ bool lift_function(func_t *pfn, ir::Function &out, qstring &err) {
       return false;
     }
 
+    const int d = insn.ops[0].reg;             // ops[0] = dest (also src for ALU)
+    const int s = insn.ops[1].reg;             // ops[1] = src reg (reg-reg ops)
+    const int64_t imm = (int64_t)insn.ops[1].value;  // ops[1] = imm (imm ops)
+    auto reg_reg = [&](ir::BinOp op) {
+      return ir::assign(d, ir::binop(op, ir::reg(d), ir::reg(s)), (uint32_t)ea);
+    };
+    auto reg_imm = [&](ir::BinOp op) {
+      return ir::assign(d, ir::binop(op, ir::reg(d), ir::constant(imm)), (uint32_t)ea);
+    };
+
     switch (insn.itype) {
-      case mcore_movi:
-        // ops[0] = dst reg, ops[1] = immediate value
-        out.stmts.push_back(ir::assign(
-            insn.ops[0].reg, ir::constant((int64_t)insn.ops[1].value),
-            (uint32_t)ea));
+      case mcore_movi:  // dst = imm
+        out.stmts.push_back(ir::assign(d, ir::constant(imm), (uint32_t)ea));
         break;
+      case mcore_mov:   // dst = src
+        out.stmts.push_back(ir::assign(d, ir::reg(s), (uint32_t)ea));
+        break;
+
+      case mcore_addu: out.stmts.push_back(reg_reg(ir::BinOp::Add)); break;
+      case mcore_subu: out.stmts.push_back(reg_reg(ir::BinOp::Sub)); break;
+      case mcore_and:  out.stmts.push_back(reg_reg(ir::BinOp::And)); break;
+      case mcore_or:   out.stmts.push_back(reg_reg(ir::BinOp::Or));  break;
+      case mcore_xor:  out.stmts.push_back(reg_reg(ir::BinOp::Xor)); break;
+      case mcore_rsub: // dst = src - dst
+        out.stmts.push_back(ir::assign(
+            d, ir::binop(ir::BinOp::Sub, ir::reg(s), ir::reg(d)), (uint32_t)ea));
+        break;
+
+      case mcore_addi: out.stmts.push_back(reg_imm(ir::BinOp::Add)); break;
+      case mcore_subi: out.stmts.push_back(reg_imm(ir::BinOp::Sub)); break;
+      case mcore_lsli: out.stmts.push_back(reg_imm(ir::BinOp::Shl)); break;
+      case mcore_lsri: out.stmts.push_back(reg_imm(ir::BinOp::Shr)); break;
+      case mcore_asri: out.stmts.push_back(reg_imm(ir::BinOp::Sar)); break;
 
       case mcore_jmp:
         if (insn.ops[0].reg == ir::kRegLR) {

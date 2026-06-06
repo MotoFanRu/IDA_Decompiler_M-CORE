@@ -11,6 +11,7 @@
 
 #include "ir/ir.h"
 #include "lifter/lifter.h"
+#include "vars/vars.h"
 #include "opt/opt.h"
 #include "emit/emit.h"
 
@@ -25,8 +26,11 @@ qstring decompile_text(func_t *pfn) {
     r += err;
     return r;
   }
+  // Recover variables before the optimizer rewrites/removes assignments, so
+  // input (parameter) detection is accurate.
+  vars::VarMap vm = vars::analyze(fn);
   opt::simplify(fn);
-  std::string c = emit::emit_c(fn);
+  std::string c = emit::emit_c(fn, vm);
   return qstring(c.c_str());
 }
 

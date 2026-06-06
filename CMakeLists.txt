@@ -15,6 +15,7 @@ include(IdaSdk)
 add_library(mcore_decompiler SHARED
   src/plugin/plugin.cpp
   src/lifter/lifter.cpp
+  src/vars/vars.cpp
   src/opt/opt.cpp
   src/emit/emit.cpp
 )
@@ -49,6 +50,7 @@ endif()
 enable_testing()
 add_executable(unit_tests
   tests/unit/test_pipeline.cpp
+  src/vars/vars.cpp
   src/opt/opt.cpp
   src/emit/emit.cpp
 )

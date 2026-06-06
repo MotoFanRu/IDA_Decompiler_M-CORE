@@ -1,0 +1,80 @@
+#include "vars/vars.h"
+
+#include "ir/ir.h"
+
+#include <algorithm>
+#include <set>
+
+namespace vars {
+
+namespace {
+
+constexpr int kArgFirst = 2;  // r2
+constexpr int kArgLast = 7;   // r7
+
+bool is_arg_reg(int r) { return r >= kArgFirst && r <= kArgLast; }
+
+void collect_regs(const ir::ExprPtr &e, std::vector<int> &out) {
+  if (!e) return;
+  switch (e->kind) {
+    case ir::ExprKind::Const: break;
+    case ir::ExprKind::Reg: out.push_back(e->reg); break;
+    case ir::ExprKind::UnOp: collect_regs(e->a, out); break;
+    case ir::ExprKind::BinOp:
+      collect_regs(e->a, out);
+      collect_regs(e->b, out);
+      break;
+  }
+}
+
+} // namespace
+
+std::string VarMap::name_of(int reg) const {
+  auto it = name.find(reg);
+  if (it != name.end()) return it->second;
+  return "r" + std::to_string(reg);
+}
+
+VarMap analyze(const ir::Function &fn) {
+  VarMap vm;
+
+  std::set<int> written;
+  std::vector<int> inputs;  // arg regs read before written, first-seen order
+  std::set<int> input_set;
+  std::set<int> used;
+
+  for (const auto &s : fn.stmts) {
+    std::vector<int> reads;
+    collect_regs(s.expr, reads);
+    for (int r : reads) {
+      used.insert(r);
+      if (!written.count(r) && is_arg_reg(r) && !input_set.count(r)) {
+        input_set.insert(r);
+        inputs.push_back(r);
+      }
+    }
+    if (s.kind == ir::StmtKind::Assign) {
+      used.insert(s.dst_reg);
+      written.insert(s.dst_reg);
+    }
+  }
+
+  // Parameters: argument-register inputs, ordered by register number (r2 first).
+  vm.params = inputs;
+  std::sort(vm.params.begin(), vm.params.end());
+  for (size_t i = 0; i < vm.params.size(); ++i)
+    vm.name[vm.params[i]] = "a" + std::to_string(i + 1);
+
+  // Locals: remaining used GP registers (not params, not sp/lr), numbered v1..
+  int local_n = 0;
+  for (int r : used) {  // std::set => ascending, deterministic
+    if (vm.name.count(r)) continue;
+    if (r == ir::kRegSP) { vm.name[r] = "sp"; continue; }
+    if (r == ir::kRegLR) { vm.name[r] = "lr"; continue; }
+    vm.name[r] = "v" + std::to_string(++local_n);
+  }
+
+  return vm;
+}
+
+} // namespace vars

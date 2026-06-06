@@ -1,6 +1,7 @@
 #include "emit/emit.h"
 
 #include "ir/ir.h"
+#include "vars/vars.h"
 
 #include <sstream>
 
@@ -8,34 +9,33 @@ namespace emit {
 
 namespace {
 
-const char *binop_sym(ir::BinOp op) {
+struct OpInfo { const char *sym; int prec; };
+
+OpInfo binop_info(ir::BinOp op) {
   switch (op) {
-    case ir::BinOp::Add: return "+";
-    case ir::BinOp::Sub: return "-";
-    case ir::BinOp::Mul: return "*";
-    case ir::BinOp::And: return "&";
-    case ir::BinOp::Or: return "|";
-    case ir::BinOp::Xor: return "^";
-    case ir::BinOp::Shl: return "<<";
-    case ir::BinOp::Shr: return ">>";
-    case ir::BinOp::Sar: return ">>";  // signed shift; type handling comes later
-    case ir::BinOp::CmpLt: return "<";
-    case ir::BinOp::CmpHs: return ">=";
-    case ir::BinOp::CmpNe: return "!=";
-    case ir::BinOp::CmpEq: return "==";
+    case ir::BinOp::Mul:   return {"*", 13};
+    case ir::BinOp::Add:   return {"+", 12};
+    case ir::BinOp::Sub:   return {"-", 12};
+    case ir::BinOp::Shl:   return {"<<", 11};
+    case ir::BinOp::Shr:   return {">>", 11};
+    case ir::BinOp::Sar:   return {">>", 11};
+    case ir::BinOp::CmpLt: return {"<", 10};
+    case ir::BinOp::CmpHs: return {">=", 10};
+    case ir::BinOp::CmpNe: return {"!=", 9};
+    case ir::BinOp::CmpEq: return {"==", 9};
+    case ir::BinOp::And:   return {"&", 8};
+    case ir::BinOp::Xor:   return {"^", 7};
+    case ir::BinOp::Or:    return {"|", 6};
   }
-  return "?";
+  return {"?", 0};
 }
 
-std::string reg_name(int r) {
-  if (r == ir::kRegSP) return "sp";
-  if (r == ir::kRegLR) return "lr";
-  return "r" + std::to_string(r);
-}
+constexpr int kAtomPrec = 100;
+constexpr int kUnPrec = 14;
 
-} // namespace
-
-std::string emit_expr(const ir::Expr &e) {
+// Render `e` assuming it appears in a context requiring at least `min_prec`;
+// wraps in parentheses only when its own precedence is lower.
+std::string render(const ir::Expr &e, const vars::VarMap &vm, int min_prec) {
   switch (e.kind) {
     case ir::ExprKind::Const: {
       std::ostringstream os;
@@ -43,33 +43,53 @@ std::string emit_expr(const ir::Expr &e) {
       return os.str();
     }
     case ir::ExprKind::Reg:
-      return reg_name(e.reg);
+      return vm.name_of(e.reg);
     case ir::ExprKind::UnOp: {
       const char *op = e.unop == ir::UnOp::Neg ? "-" : "~";
-      return std::string(op) + "(" + (e.a ? emit_expr(*e.a) : "") + ")";
+      std::string s = std::string(op) + (e.a ? render(*e.a, vm, kUnPrec) : "");
+      return kUnPrec < min_prec ? "(" + s + ")" : s;
     }
     case ir::ExprKind::BinOp: {
-      std::string lhs = e.a ? emit_expr(*e.a) : "";
-      std::string rhs = e.b ? emit_expr(*e.b) : "";
-      return "(" + lhs + " " + binop_sym(e.binop) + " " + rhs + ")";
+      OpInfo oi = binop_info(e.binop);
+      std::string lhs = e.a ? render(*e.a, vm, oi.prec) : "";
+      std::string rhs = e.b ? render(*e.b, vm, oi.prec + 1) : "";
+      std::string s = lhs + " " + oi.sym + " " + rhs;
+      return oi.prec < min_prec ? "(" + s + ")" : s;
     }
   }
   return "?";
 }
 
-std::string emit_c(const ir::Function &fn) {
+} // namespace
+
+std::string emit_expr(const ir::Expr &e, const vars::VarMap &vm) {
+  return render(e, vm, 0);
+}
+
+std::string emit_c(const ir::Function &fn, const vars::VarMap &vm) {
   std::ostringstream os;
   const std::string name = fn.name.empty() ? "sub" : fn.name;
-  os << "int " << name << "(void)\n{\n";
+
+  os << "int " << name << "(";
+  if (vm.params.empty()) {
+    os << "void";
+  } else {
+    for (size_t i = 0; i < vm.params.size(); ++i) {
+      if (i) os << ", ";
+      os << "int " << vm.name_of(vm.params[i]);
+    }
+  }
+  os << ")\n{\n";
+
   for (const auto &s : fn.stmts) {
     switch (s.kind) {
       case ir::StmtKind::Assign:
-        os << "  " << reg_name(s.dst_reg) << " = "
-           << (s.expr ? emit_expr(*s.expr) : "?") << ";\n";
+        os << "  " << vm.name_of(s.dst_reg) << " = "
+           << (s.expr ? emit_expr(*s.expr, vm) : "?") << ";\n";
         break;
       case ir::StmtKind::Return:
         if (s.has_value && s.expr)
-          os << "  return " << emit_expr(*s.expr) << ";\n";
+          os << "  return " << emit_expr(*s.expr, vm) << ";\n";
         else
           os << "  return;\n";
         break;
@@ -78,6 +98,7 @@ std::string emit_c(const ir::Function &fn) {
         break;
     }
   }
+
   os << "}\n";
   return os.str();
 }
