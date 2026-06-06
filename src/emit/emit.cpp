@@ -231,8 +231,13 @@ class Structurer {
     while (changed) {
       changed = false;
       for (int i = 0; i < exit_; ++i) {
+        // Self-edges (infinite loops) are treated as exits so post-dominators
+        // converge; a block whose only successor is itself post-dominates to exit.
+        std::vector<int> ps;
+        for (int s : succ_[i]) if (s != i) ps.push_back(s);
+        if (ps.empty()) ps.push_back(exit_);
         std::set<int> inter; bool first = true;
-        for (int s : succ_[i]) {
+        for (int s : ps) {
           if (first) { inter = pdom_[s]; first = false; }
           else {
             std::set<int> tmp;
@@ -275,6 +280,9 @@ class Structurer {
         for (int p : preds_[u])
           if (lp.body.insert(p).second) stack.push_back(p);
       }
+
+      // A self-loop (infinite `while (1)`) is emitted directly by emit_seq.
+      if (lp.body.size() == 1) continue;
 
       // Single exit target across the whole loop body.
       int exit_node = -1;
@@ -325,6 +333,16 @@ class Structurer {
 
   void emit_seq(int n, int stop, int ind, std::ostringstream &os) {
     while (n != stop && n != exit_ && !visited_.count(n)) {
+      // Infinite self-loop (loc: goto loc) -> while (1) { stmts }.
+      const ir::Terminator &t0 = fn_.blocks[n].term;
+      if ((t0.kind == ir::TermKind::Goto || t0.kind == ir::TermKind::Fallthrough) &&
+          !succ_[n].empty() && succ_[n][0] == n) {
+        visited_.insert(n);
+        os << ind_s(ind) << "while ( 1 )\n" << ind_s(ind) << "{\n";
+        emit_stmts(n, ind + 1, os);
+        os << ind_s(ind) << "}\n";
+        return;
+      }
       if (loops_.count(n) && (loopctx_.empty() || loopctx_.back().first != n)) {
         emit_loop(n, ind, os);
         n = loops_[n].exit;
