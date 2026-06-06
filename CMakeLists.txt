@@ -14,9 +14,13 @@ include(IdaSdk)
 # ---------------------------------------------------------------------------
 add_library(mcore_decompiler SHARED
   src/plugin/plugin.cpp
-  src/decoder/decoder.cpp
+  src/lifter/lifter.cpp
+  src/opt/opt.cpp
+  src/emit/emit.cpp
 )
-target_include_directories(mcore_decompiler PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+target_include_directories(mcore_decompiler PRIVATE
+  "${CMAKE_CURRENT_SOURCE_DIR}/src"
+  "${CMAKE_CURRENT_SOURCE_DIR}/third_party/mcore-proc")  # M*CORE ins.hpp / mcore.hpp
 ida_configure_plugin(mcore_decompiler)
 
 # ---------------------------------------------------------------------------
@@ -44,8 +48,9 @@ endif()
 # ---------------------------------------------------------------------------
 enable_testing()
 add_executable(unit_tests
-  tests/unit/test_decoder.cpp
-  src/decoder/decoder.cpp
+  tests/unit/test_pipeline.cpp
+  src/opt/opt.cpp
+  src/emit/emit.cpp
 )
 target_include_directories(unit_tests PRIVATE
   "${CMAKE_CURRENT_SOURCE_DIR}/src"

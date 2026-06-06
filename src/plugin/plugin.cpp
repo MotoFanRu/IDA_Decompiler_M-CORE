@@ -1,36 +1,49 @@
-// M-CORE decompiler plugin for IDA Pro 9 (Hex-Rays microcode backend).
+// M-CORE decompiler plugin for IDA Pro 9 (self-contained; Path B).
 //
-// M0: loadable skeleton. It verifies the Hex-Rays decompiler is present and
-// exposes a run() entry point. The actual microcode pipeline (create_empty_mba
-// -> lift -> create_cfunc) is wired in M1 (the spike) and beyond.
+// Runs on a database analysed by the M*CORE processor module. The pipeline is:
+// insn_t -> IR (lifter) -> simplify (opt) -> C text (emit). Hex-Rays is not used
+// (no decompiler backend loads for an unsupported processor).
 #include <ida.hpp>
 #include <idp.hpp>
 #include <loader.hpp>
 #include <kernwin.hpp>
-#include <hexrays.hpp>
+#include <funcs.hpp>
+
+#include "ir/ir.h"
+#include "lifter/lifter.h"
+#include "opt/opt.h"
+#include "emit/emit.h"
 
 namespace {
 
-struct mcore_plugmod_t : public plugmod_t {
-  bool hexrays_ok = false;
-
-  mcore_plugmod_t() {
-    hexrays_ok = init_hexrays_plugin();
-    msg("[mcore-decompiler] loaded (hex-rays decompiler %s)\n",
-        hexrays_ok ? "available" : "NOT available");
+// Decompile one function and return the pseudocode text (or an error string).
+qstring decompile_text(func_t *pfn) {
+  ir::Function fn;
+  qstring err;
+  if (!mcore::lift_function(pfn, fn, err)) {
+    qstring r("// decompile failed: ");
+    r += err;
+    return r;
   }
+  opt::simplify(fn);
+  std::string c = emit::emit_c(fn);
+  return qstring(c.c_str());
+}
 
-  ~mcore_plugmod_t() override { term_hexrays_plugin(); }
+struct mcore_plugmod_t : public plugmod_t {
+  mcore_plugmod_t() { msg("[mcore-decompiler] loaded\n"); }
 
-  bool idaapi run(size_t arg) override {
-    if (!hexrays_ok) {
-      warning("M-CORE decompiler: the Hex-Rays decompiler is not available.");
-      return false;
+  bool idaapi run(size_t /*arg*/) override {
+    // Batch-friendly: decompile every function and print. A focused, cursor-based
+    // action + custom viewer come in B8.
+    size_t qty = get_func_qty();
+    msg("[mcore-decompiler] run: %zu function(s)\n", qty);
+    for (size_t i = 0; i < qty; ++i) {
+      func_t *pfn = getn_func(i);
+      // Unique markers so headless tests can extract pseudocode from the log.
+      msg(">>>MCORE_FUNC %a\n%s<<<MCORE_END\n", pfn->start_ea,
+          decompile_text(pfn).c_str());
     }
-    // M1: this will drive create_empty_mba() -> lift -> create_cfunc() for the
-    // function under the cursor. For now it only proves the entry point works.
-    msg("[mcore-decompiler] run(arg=%llu) -- pipeline lands in M1\n",
-        (unsigned long long)arg);
     return true;
   }
 };
@@ -47,8 +60,8 @@ plugin_t PLUGIN = {
   init,
   nullptr,                      // term  (must be null for PLUGIN_MULTI)
   nullptr,                      // run   (must be null for PLUGIN_MULTI)
-  "Decompile M-CORE functions via Hex-Rays microcode",
-  "Lifts M-CORE instructions into Hex-Rays microcode to produce C pseudocode.",
+  "Decompile M-CORE functions to C pseudocode",
+  "Self-contained M-CORE decompiler: insn_t -> IR -> C (no Hex-Rays).",
   "M-CORE Decompiler",
   "Ctrl-Shift-M",
 };
