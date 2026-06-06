@@ -258,6 +258,20 @@ void lift_insn(const insn_t &insn, ir::Block &blk) {
     case mcore_st_h: store_from(2); break;
     case mcore_st_b: store_from(1); break;
 
+    // Load/store quad: transfer r4..r7 to/from [base], [base+4], [base+8], [base+12].
+    case mcore_ldq:
+      for (int k = 0; k < 4; ++k) {
+        ir::ExprPtr addr = k ? ir::binop(ir::BinOp::Add, ir::reg(d), ir::constant(k * 4)) : ir::reg(d);
+        blk.stmts.push_back(ir::assign(4 + k, ir::load(addr, 4), ea));
+      }
+      break;
+    case mcore_stq:
+      for (int k = 0; k < 4; ++k) {
+        ir::ExprPtr addr = k ? ir::binop(ir::BinOp::Add, ir::reg(d), ir::constant(k * 4)) : ir::reg(d);
+        blk.stmts.push_back(ir::store(addr, ir::reg(4 + k), 4, ea));
+      }
+      break;
+
     // Calls: result in r2 (ABI).
     case mcore_bsr: {
       ea_t tgt = (ea_t)insn.ops[0].addr;
