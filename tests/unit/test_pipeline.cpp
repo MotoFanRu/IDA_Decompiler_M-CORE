@@ -221,6 +221,35 @@ TEST("large constant renders hex, small decimal") {
   CHECK(emit::emit_expr(*ir::constant(-1), vm) == "-1");
 }
 
+TEST("cross-block C-bit resolves in a later block's branch") {
+  // B0: C = r2 < r3 ; fallthrough B1
+  // B1: bt B3        ; fallthrough B2   (branch reads C set in B0)
+  // B2: r2 = 1       ; fallthrough B3
+  // B3: return r2
+  ir::Function fn;
+  fn.name = "f";
+  fn.entry = 0;
+  ir::Block b0; b0.entry = 0;
+  b0.stmts.push_back(ir::assign(ir::kRegC, ir::binop(ir::BinOp::CmpLt, ir::reg(2), ir::reg(3))));
+  b0.term = fall_t(2);
+  fn.blocks.push_back(std::move(b0));
+  ir::Block b1; b1.entry = 2;
+  b1.term = cbr_t(ir::reg(ir::kRegC), /*taken=*/6, /*fth=*/4);
+  fn.blocks.push_back(std::move(b1));
+  ir::Block b2; b2.entry = 4;
+  b2.stmts.push_back(ir::assign(2, ir::constant(1)));
+  b2.term = fall_t(6);
+  fn.blocks.push_back(std::move(b2));
+  ir::Block b3; b3.entry = 6;
+  b3.term = ret_t(ir::reg(2));
+  fn.blocks.push_back(std::move(b3));
+
+  std::string c = decompile(std::move(fn));
+  CHECK(contains(c, "a1 < a2"));   // condition resolved across blocks
+  CHECK(!contains(c, "cond"));     // C bit fully inlined, not leaked
+  CHECK(!contains(c, "r100"));
+}
+
 TEST("stack frame recovery: prologue/epilogue hidden, slot named") {
   // sp=sp-16 ; *(sp+8)=lr ; *(sp)=a1 ; r3=*(sp) ; lr=*(sp+8) ; sp=sp+16 ; return r3
   std::vector<ir::Stmt> stmts;

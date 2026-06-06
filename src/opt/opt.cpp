@@ -145,25 +145,103 @@ void count_reads(const ir::ExprPtr &e, std::map<int, int> &reads) {
   }
 }
 
+bool expr_equal(const ir::ExprPtr &a, const ir::ExprPtr &b) {
+  if (!a || !b) return a == b;
+  if (a->kind != b->kind) return false;
+  switch (a->kind) {
+    case ir::ExprKind::Const: return a->value == b->value && a->name == b->name;
+    case ir::ExprKind::Reg: return a->reg == b->reg;
+    case ir::ExprKind::UnOp: return a->unop == b->unop && expr_equal(a->a, b->a);
+    case ir::ExprKind::Cast:
+      return a->size == b->size && a->is_signed == b->is_signed && expr_equal(a->a, b->a);
+    case ir::ExprKind::Load: return a->size == b->size && expr_equal(a->a, b->a);
+    case ir::ExprKind::BinOp:
+      return a->binop == b->binop && expr_equal(a->a, b->a) && expr_equal(a->b, b->b);
+    case ir::ExprKind::Call: return false;  // treat calls as never equal
+  }
+  return false;
+}
+
+// Reaching definition of the single C bit at each block's entry (nullptr = none
+// or conflicting). Lets a compare in one block resolve a branch/mvc in another.
+std::vector<ir::ExprPtr> compute_c_reaching(const ir::Function &fn) {
+  int n = (int)fn.blocks.size();
+  std::map<uint32_t, int> idx;
+  for (int i = 0; i < n; ++i) idx[fn.blocks[i].entry] = i;
+
+  std::vector<std::vector<int>> preds(n);
+  auto succs = [&](int i) {
+    std::vector<int> out;
+    const ir::Terminator &t = fn.blocks[i].term;
+    auto add = [&](uint32_t ea) { auto it = idx.find(ea); if (it != idx.end()) out.push_back(it->second); };
+    if (t.kind == ir::TermKind::Goto || t.kind == ir::TermKind::Fallthrough) add(t.target);
+    if (t.kind == ir::TermKind::CondBranch) { add(t.target); add(t.fallthrough); }
+    return out;
+  };
+  for (int i = 0; i < n; ++i)
+    for (int s : succs(i)) preds[s].push_back(i);
+
+  // Per-block: mode 0 = pass-through, 1 = defines C (def), 2 = kills C.
+  std::vector<int> mode(n, 0);
+  std::vector<ir::ExprPtr> def(n);
+  for (int i = 0; i < n; ++i) {
+    int m = 0; ir::ExprPtr d;
+    for (const auto &s : fn.blocks[i].stmts) {
+      if (s.kind == ir::StmtKind::Assign && s.dst_reg == ir::kRegC) { m = 1; d = s.expr; }
+      else if (s.kind == ir::StmtKind::Unknown) { m = 2; d = nullptr; }
+      else if (s.kind == ir::StmtKind::Assign && has_call(s.expr)) { m = 2; d = nullptr; }
+    }
+    mode[i] = m; def[i] = d;
+  }
+
+  std::vector<ir::ExprPtr> c_in(n), c_out(n);
+  for (int iter = 0; iter < n + 2; ++iter) {
+    for (int i = 0; i < n; ++i)
+      c_out[i] = mode[i] == 1 ? def[i] : mode[i] == 2 ? nullptr : c_in[i];
+    bool changed = false;
+    for (int i = 0; i < n; ++i) {
+      ir::ExprPtr meet; bool first = true, ok = true;
+      for (int p : preds[i]) {
+        if (first) { meet = c_out[p]; first = false; }
+        else if (!expr_equal(meet, c_out[p])) { ok = false; }
+      }
+      ir::ExprPtr nv = (first || !ok) ? nullptr : meet;
+      if (!expr_equal(nv, c_in[i])) { c_in[i] = nv; changed = true; }
+    }
+    if (!changed) break;
+  }
+  return c_in;
+}
+
 } // namespace
 
 void simplify(ir::Function &fn) {
-  // Pass 1: per-block constant propagation + condition (C-bit) inlining.
-  for (auto &b : fn.blocks) {
+  std::vector<ir::ExprPtr> c_in = compute_c_reaching(fn);
+
+  // Pass 1: per-block constant propagation + condition (C-bit) inlining. The C
+  // value (`c_cur`) starts from the cross-block reaching definition and is
+  // substituted into every C read (branches, mvc/mvcv), so the synthetic C
+  // register never reaches the output.
+  for (size_t bi = 0; bi < fn.blocks.size(); ++bi) {
+    ir::Block &b = fn.blocks[bi];
     std::map<int, ir::ExprPtr> cprop;  // const-only, intra-block
-    ir::ExprPtr c_value;               // last value assigned to the C bit
+    ir::ExprPtr c_cur = c_in[bi];
+
+    auto resolve = [&](const ir::ExprPtr &e) {
+      return fold_not(subst_c(rewrite(e, cprop), c_cur));
+    };
 
     for (auto &s : b.stmts) {
       if (s.kind == ir::StmtKind::Store) {
         s.addr = rewrite(s.addr, cprop);
-        s.expr = rewrite(s.expr, cprop);
+        s.expr = resolve(s.expr);
         continue;
       }
-      if (s.kind != ir::StmtKind::Assign) { cprop.clear(); continue; }
-      s.expr = rewrite(s.expr, cprop);
-      if (has_call(s.expr)) cprop.clear();  // a call clobbers caller-saved regs
+      if (s.kind != ir::StmtKind::Assign) { cprop.clear(); c_cur = nullptr; continue; }
+      s.expr = resolve(s.expr);
+      if (has_call(s.expr)) { cprop.clear(); c_cur = nullptr; }  // call clobbers regs + C
       if (s.dst_reg == ir::kRegC) {
-        c_value = s.expr;
+        c_cur = s.expr;
       } else if (is_const(s.expr)) {
         cprop[s.dst_reg] = s.expr;
       } else {
@@ -171,8 +249,8 @@ void simplify(ir::Function &fn) {
       }
     }
 
-    b.term.cond = fold_not(subst_c(rewrite(b.term.cond, cprop), c_value));
-    b.term.value = rewrite(b.term.value, cprop);
+    b.term.cond = resolve(b.term.cond);
+    b.term.value = resolve(b.term.value);
   }
 
   // Pass 2: dead-assignment elimination. Remove an assignment whose destination

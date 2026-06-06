@@ -124,6 +124,13 @@ void lift_insn(const insn_t &insn, ir::Block &blk) {
       blk.stmts.push_back(ir::assign(d, ir::binop(ir::BinOp::And, ir::reg(d),
           ir::constant((int64_t)(uint32_t)~(1u << imm))), ea));
       break;
+    case mcore_mvc:   // d = C
+      blk.stmts.push_back(ir::assign(d, ir::reg(ir::kRegC), ea));
+      break;
+    case mcore_mvcv:  // d = !C
+      blk.stmts.push_back(ir::assign(d, ir::unop(ir::UnOp::LNot, ir::reg(ir::kRegC)), ea));
+      break;
+
     case mcore_btsti:  // C = (d >> n) & 1
       blk.stmts.push_back(ir::assign(ir::kRegC, ir::binop(ir::BinOp::And,
           ir::binop(ir::BinOp::Shr, ir::reg(d), ir::constant(imm)), ir::constant(1)), ea));

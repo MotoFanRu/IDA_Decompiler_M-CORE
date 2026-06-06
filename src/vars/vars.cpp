@@ -94,7 +94,8 @@ VarMap analyze(const ir::Function &fn) {
       vm.name[r] = buf;
       continue;
     }
-    if (!is_gp_reg(r)) continue;  // skip C bit / control regs
+    if (r == ir::kRegC) { vm.name[r] = "cond"; continue; }  // unresolved C bit
+    if (!is_gp_reg(r)) continue;  // skip other control regs
     if (r == ir::kRegSP) { vm.name[r] = "sp"; continue; }
     if (r == ir::kRegLR) { vm.name[r] = "lr"; continue; }
     vm.name[r] = "v" + std::to_string(++local_n);
