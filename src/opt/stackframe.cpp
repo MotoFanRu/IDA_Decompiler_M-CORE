@@ -26,16 +26,26 @@ bool sp_offset(const ir::ExprPtr &addr, int64_t &off) {
   return false;
 }
 
-// Replace sp-relative loads with stack-slot register references.
+// Replace sp-relative loads with stack-slot register references, and sp-relative
+// address values (sp / sp + off used as a pointer) with &var_off.
 ir::ExprPtr rw(const ir::ExprPtr &e) {
   if (!e) return e;
   switch (e->kind) {
+    case ir::ExprKind::Reg:
+      if (e->reg == ir::kRegSP)  // bare sp used as a value -> &var_0
+        return ir::unop(ir::UnOp::AddrOf, ir::reg(ir::kStackBase));
+      return e;
     case ir::ExprKind::Load: {
       int64_t off;
       if (sp_offset(e->a, off)) return ir::reg(ir::kStackBase + (int)off);
       return ir::load(rw(e->a), e->size);
     }
-    case ir::ExprKind::BinOp: return ir::binop(e->binop, rw(e->a), rw(e->b));
+    case ir::ExprKind::BinOp: {
+      int64_t off;
+      if (e->binop == ir::BinOp::Add && sp_offset(e, off))  // (sp + off) value -> &var_off
+        return ir::unop(ir::UnOp::AddrOf, ir::reg(ir::kStackBase + (int)off));
+      return ir::binop(e->binop, rw(e->a), rw(e->b));
+    }
     case ir::ExprKind::UnOp:  return ir::unop(e->unop, rw(e->a));
     case ir::ExprKind::Cast:  return ir::cast(e->size, e->is_signed, rw(e->a));
     case ir::ExprKind::Call: {

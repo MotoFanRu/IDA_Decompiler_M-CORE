@@ -42,6 +42,13 @@ void collect_regs(const ir::ExprPtr &e, std::vector<int> &out) {
 std::string VarMap::name_of(int reg) const {
   auto it = name.find(reg);
   if (it != name.end()) return it->second;
+  // Stack slots may be synthesized after analyze() (e.g. &var_0 + 16 folded to
+  // &var_10 during inlining); name them by their byte offset like the rest.
+  if (reg >= ir::kStackBase) {
+    char buf[24];
+    std::snprintf(buf, sizeof(buf), "var_%X", reg - ir::kStackBase);
+    return buf;
+  }
   return "r" + std::to_string(reg);
 }
 

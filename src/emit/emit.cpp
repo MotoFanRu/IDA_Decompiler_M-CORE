@@ -95,7 +95,8 @@ std::string render(const ir::Expr &e, const vars::VarMap &vm, int min_prec) {
       return kUnPrec < min_prec ? "(" + s + ")" : s;
     }
     case ir::ExprKind::UnOp: {
-      const char *op = e.unop == ir::UnOp::Neg ? "-" : e.unop == ir::UnOp::Not ? "~" : "!";
+      const char *op = e.unop == ir::UnOp::Neg ? "-" : e.unop == ir::UnOp::Not ? "~"
+                       : e.unop == ir::UnOp::AddrOf ? "&" : "!";
       std::string s = std::string(op) + (e.a ? render(*e.a, vm, kUnPrec) : "");
       return kUnPrec < min_prec ? "(" + s + ")" : s;
     }

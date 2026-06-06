@@ -35,6 +35,23 @@ ir::ExprPtr fold_binop(ir::BinOp op, int64_t a, int64_t b) {
   return nullptr;
 }
 
+// Fold pointer arithmetic on a stack-slot address: &var_X + c -> &var_(X+c)
+// (and - c). Stack slots are byte-addressed, so this keeps the byte offset
+// correct (unlike C pointer arithmetic, which would scale by element size).
+ir::ExprPtr fold_addr_offset(ir::BinOp op, const ir::ExprPtr &a, const ir::ExprPtr &b) {
+  auto stack_addr = [](const ir::ExprPtr &e) {
+    return e && e->kind == ir::ExprKind::UnOp && e->unop == ir::UnOp::AddrOf && e->a &&
+           e->a->kind == ir::ExprKind::Reg && e->a->reg >= ir::kStackBase;
+  };
+  if (op == ir::BinOp::Add) {
+    if (stack_addr(a) && is_const(b)) return ir::unop(ir::UnOp::AddrOf, ir::reg((int)(a->a->reg + b->value)));
+    if (stack_addr(b) && is_const(a)) return ir::unop(ir::UnOp::AddrOf, ir::reg((int)(b->a->reg + a->value)));
+  }
+  if (op == ir::BinOp::Sub && stack_addr(a) && is_const(b))
+    return ir::unop(ir::UnOp::AddrOf, ir::reg((int)(a->a->reg - b->value)));
+  return nullptr;
+}
+
 // Replace registers by known constant defs and fold constant operations.
 ir::ExprPtr rewrite(const ir::ExprPtr &e, const std::map<int, ir::ExprPtr> &defs) {
   if (!e) return e;
@@ -60,6 +77,7 @@ ir::ExprPtr rewrite(const ir::ExprPtr &e, const std::map<int, ir::ExprPtr> &defs
     case ir::ExprKind::BinOp: {
       ir::ExprPtr a = rewrite(e->a, defs);
       ir::ExprPtr b = rewrite(e->b, defs);
+      if (ir::ExprPtr f = fold_addr_offset(e->binop, a, b)) return f;
       if (is_const(a) && is_const(b))
         if (ir::ExprPtr f = fold_binop(e->binop, a->value, b->value))
           return f;
@@ -419,7 +437,11 @@ ir::ExprPtr subst_inline(const ir::ExprPtr &e, const std::map<int, ir::ExprPtr> 
       auto it = defs.find(e->reg);
       return it != defs.end() ? it->second : e;
     }
-    case ir::ExprKind::BinOp: return ir::binop(e->binop, subst_inline(e->a, defs), subst_inline(e->b, defs));
+    case ir::ExprKind::BinOp: {
+      ir::ExprPtr a = subst_inline(e->a, defs), b = subst_inline(e->b, defs);
+      if (ir::ExprPtr f = fold_addr_offset(e->binop, a, b)) return f;  // &var_X + c -> &var_(X+c)
+      return ir::binop(e->binop, a, b);
+    }
     case ir::ExprKind::UnOp:  return ir::unop(e->unop, subst_inline(e->a, defs));
     case ir::ExprKind::Cast:  return ir::cast(e->size, e->is_signed, subst_inline(e->a, defs));
     case ir::ExprKind::Load:  return ir::load(subst_inline(e->a, defs), e->size);

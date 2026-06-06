@@ -33,7 +33,7 @@ enum class BinOp {
   CmpLt, CmpHs, CmpNe, CmpEq,
 };
 
-enum class UnOp { Neg, Not, LNot };  // -x, ~x, !x
+enum class UnOp { Neg, Not, LNot, AddrOf };  // -x, ~x, !x, &x
 
 struct Expr;
 using ExprPtr = std::shared_ptr<Expr>;

@@ -173,6 +173,18 @@ TEST("store renders as typed pointer assignment") {
   CHECK(contains(c, "*(int *)(a1) = a2;"));
 }
 
+TEST("sp-relative address becomes &var_N") {
+  // r2 = sp ; r2 = r2 + 16 ; return r2   ->   return &var_10;  (16 == 0x10)
+  std::vector<ir::Stmt> stmts;
+  stmts.push_back(ir::assign(2, ir::reg(0)));  // r0 == sp
+  stmts.push_back(ir::assign(2, ir::binop(ir::BinOp::Add, ir::reg(2), ir::constant(16))));
+  ir::Function fn = one_block(std::move(stmts), ir::reg(2));
+  std::string c = decompile(std::move(fn));
+  CHECK(contains(c, "&var_10"));
+  CHECK(!contains(c, "sp"));         // no raw stack pointer
+  CHECK(!contains(c, "+ 16"));       // address arithmetic folded into the offset
+}
+
 TEST("scaled load/store render as array indexing") {
   vars::VarMap vm;
   // *(int*)(r2 + r3*4)  ->  r2[r3]
