@@ -35,6 +35,12 @@ ir::Terminator fall_t(uint32_t to) {
   t.target = to;
   return t;
 }
+ir::Terminator goto_t(uint32_t to) {
+  ir::Terminator t;
+  t.kind = ir::TermKind::Goto;
+  t.target = to;
+  return t;
+}
 ir::Terminator cbr_t(ir::ExprPtr cond, uint32_t taken, uint32_t fth) {
   ir::Terminator t;
   t.kind = ir::TermKind::CondBranch;
@@ -142,6 +148,39 @@ TEST("if-then structuring (max): cmplt + bf") {
   CHECK(contains(c, "return a1;"));
   CHECK(!contains(c, "goto"));
   CHECK(!contains(c, "r100"));   // C bit fully inlined away
+}
+
+TEST("pre-test while loop structuring") {
+  // B0: C = r2 < r3 ; bf B2(exit)    (stay in loop while a<b)
+  // B1: r2 = r2 + 1 ; goto B0        (back edge)
+  // B2: return r2
+  ir::Function fn;
+  fn.name = "f";
+  fn.entry = 0;
+
+  ir::Block b0;
+  b0.entry = 0;
+  b0.stmts.push_back(ir::assign(ir::kRegC, ir::binop(ir::BinOp::CmpLt, ir::reg(2), ir::reg(3))));
+  b0.term = cbr_t(ir::unop(ir::UnOp::LNot, ir::reg(ir::kRegC)), /*taken=*/8, /*fth=*/4);
+  fn.blocks.push_back(std::move(b0));
+
+  ir::Block b1;
+  b1.entry = 4;
+  b1.stmts.push_back(ir::assign(2, ir::binop(ir::BinOp::Add, ir::reg(2), ir::constant(1))));
+  b1.term = goto_t(0);
+  fn.blocks.push_back(std::move(b1));
+
+  ir::Block b2;
+  b2.entry = 8;
+  b2.term = ret_t(ir::reg(2));
+  fn.blocks.push_back(std::move(b2));
+
+  std::string c = decompile(std::move(fn));
+  CHECK(contains(c, "while (a1 < a2) {"));
+  CHECK(contains(c, "a1 = a1 + 1;"));
+  CHECK(contains(c, "return a1;"));
+  CHECK(!contains(c, "goto"));
+  CHECK(!contains(c, "while (1)"));
 }
 
 TEST_MAIN()
