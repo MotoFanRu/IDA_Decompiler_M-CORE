@@ -4,7 +4,9 @@
 
 #include "ir/ir.h"
 
+#include <array>
 #include <map>
+#include <set>
 #include <vector>
 
 namespace opt {
@@ -107,6 +109,82 @@ void recover_stack(ir::Function &fn) {
     // Rewrite terminator operands too (e.g. a return value loaded from the frame).
     b.term.cond = rw(b.term.cond);
     b.term.value = rw(b.term.value);
+  }
+}
+
+namespace {
+
+bool is_call_expr(const ir::ExprPtr &e) { return e && e->kind == ir::ExprKind::Call; }
+
+// Argument registers (r2..r7) that were set up for the call at (blk, stmt_i):
+// those assigned since the most recent preceding call along the unique
+// (single-predecessor) path. A call clobbers the caller-saved arg registers, so
+// it acts as a barrier (but still defines its own result r2). `target_reg` is
+// the callee-pointer register of an indirect call (excluded), else -1.
+std::vector<ir::ExprPtr> args_for_call(const ir::Function &fn,
+                                       const std::vector<std::vector<int>> &preds,
+                                       int blk, int stmt_i, int target_reg) {
+  std::array<bool, 8> defined{};  // defined[r] for r in 2..7
+  int cur = blk;
+  bool first = true;
+  std::set<int> visited;
+  while (!visited.count(cur)) {
+    visited.insert(cur);
+    const auto &b = fn.blocks[cur];
+    // In the call's own block scan strictly before it (stmt_i-1..0, possibly
+    // empty); in predecessor blocks scan the whole block from the end.
+    int from = first ? stmt_i - 1 : (int)b.stmts.size() - 1;
+    first = false;
+    bool barrier = false;
+    for (int i = from; i >= 0; --i) {
+      const ir::Stmt &s = b.stmts[i];
+      // A previous call clobbers the caller-saved arg registers; stop here.
+      // Its own result is ambiguous (used as the next arg, or dead), so don't
+      // claim it — preferring a missing arg over an invented one.
+      if (s.kind == ir::StmtKind::Assign && is_call_expr(s.expr)) { barrier = true; break; }
+      if (s.kind == ir::StmtKind::Assign && s.dst_reg >= 2 && s.dst_reg <= 7 &&
+          s.dst_reg != target_reg)
+        defined[s.dst_reg] = true;
+    }
+    if (barrier || preds[cur].size() != 1) break;
+    cur = preds[cur][0];  // follow the single dominating predecessor
+  }
+  std::vector<ir::ExprPtr> args;
+  for (int r = 2; r <= 7 && defined[r]; ++r) args.push_back(ir::reg(r));
+  return args;
+}
+
+}  // namespace
+
+void recover_call_args(ir::Function &fn) {
+  int n = (int)fn.blocks.size();
+  std::map<uint32_t, int> idx;
+  for (int i = 0; i < n; ++i) idx[fn.blocks[i].entry] = i;
+
+  std::vector<std::vector<int>> preds(n);
+  for (int i = 0; i < n; ++i) {
+    const ir::Terminator &t = fn.blocks[i].term;
+    auto add = [&](uint32_t ea) {
+      auto it = idx.find(ea);
+      if (it != idx.end()) preds[it->second].push_back(i);
+    };
+    if (t.kind == ir::TermKind::Goto || t.kind == ir::TermKind::Fallthrough) add(t.target);
+    if (t.kind == ir::TermKind::CondBranch) { add(t.target); add(t.fallthrough); }
+  }
+
+  auto target_of = [](const ir::ExprPtr &call) {
+    return call->a && call->a->kind == ir::ExprKind::Reg ? call->a->reg : -1;
+  };
+  for (int bi = 0; bi < n; ++bi) {
+    auto &b = fn.blocks[bi];
+    for (int i = 0; i < (int)b.stmts.size(); ++i) {
+      ir::Stmt &s = b.stmts[i];
+      if (s.kind == ir::StmtKind::Assign && is_call_expr(s.expr))
+        s.expr->args = args_for_call(fn, preds, bi, i, target_of(s.expr));
+    }
+    if (b.term.value && is_call_expr(b.term.value))  // tail call
+      b.term.value->args =
+          args_for_call(fn, preds, bi, (int)b.stmts.size(), target_of(b.term.value));
   }
 }
 

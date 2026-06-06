@@ -31,8 +31,10 @@ qstring decompile_text(func_t *pfn) {
     r += err;
     return r;
   }
-  // Recover the stack frame first (sp slots -> locals, drop prologue/epilogue),
+  // Recover call arguments across blocks while raw arg registers are still
+  // visible, then the stack frame (sp slots -> locals, drop prologue/epilogue),
   // then recover variables (before the optimizer rewrites/removes assignments).
+  opt::recover_call_args(fn);
   opt::recover_stack(fn);
   opt::split_ranges(fn);  // separate distinct values sharing a register
   vars::VarMap vm = vars::analyze(fn);

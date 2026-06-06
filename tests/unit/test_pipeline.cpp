@@ -16,6 +16,7 @@ bool contains(const std::string &hay, const std::string &needle) {
 }
 
 std::string decompile(ir::Function fn) {
+  opt::recover_call_args(fn);
   opt::recover_stack(fn);
   opt::split_ranges(fn);
   vars::VarMap vm = vars::analyze(fn);
@@ -202,12 +203,50 @@ TEST("byte load uses unsigned char pointer") {
   CHECK(contains(decompile(std::move(fn)), "*(unsigned char *)(a1)"));
 }
 
-TEST("call with args; result assigned") {
-  std::vector<ir::ExprPtr> args = {ir::reg(2)};
-  ir::Function fn = one_block({ir::assign(2, ir::call("g", args))}, ir::reg(2));
+TEST("call with set-up arg; result used") {
+  // r2 = 7 ; r2 = g(r2) ; return r2   ->  g(7) called, its result returned
+  std::vector<ir::Stmt> stmts;
+  stmts.push_back(ir::assign(2, ir::constant(7)));
+  stmts.push_back(ir::assign(2, ir::call("g", {ir::reg(2)})));
+  ir::Function fn = one_block(std::move(stmts), ir::reg(2));
   std::string c = decompile(std::move(fn));
-  CHECK(contains(c, "a1 = g(a1);"));
-  CHECK(contains(c, "return a1;"));
+  CHECK(contains(c, "g(7)"));      // arg recovered and folded
+  CHECK(contains(c, "return"));    // result flows to the return
+}
+
+TEST("call argument set in a predecessor block is recovered") {
+  // B0: r2 = 5 ; goto B1     B1: r2 = g() ; return r2
+  // The arg lives in r2 across the block boundary; g must be called as g(5).
+  ir::Function fn;
+  fn.name = "f";
+  fn.entry = 0;
+  ir::Block b0;
+  b0.entry = 0;
+  b0.stmts.push_back(ir::assign(2, ir::constant(5)));
+  b0.term = goto_t(1);
+  ir::Block b1;
+  b1.entry = 1;
+  b1.stmts.push_back(ir::assign(2, ir::call("g", {})));  // lifter saw no in-block arg
+  b1.term = ret_t(ir::reg(2));
+  fn.blocks.push_back(std::move(b0));
+  fn.blocks.push_back(std::move(b1));
+  std::string c = decompile(std::move(fn));
+  CHECK(!contains(c, "g()"));   // the cross-block argument is not lost
+  CHECK(contains(c, "g(v"));    // g is called with the recovered local
+}
+
+TEST("argument clobbered by an earlier call is not passed") {
+  // r3 = 9 ; r2 = foo() ; r2 = 1 ; bar(...)   ->  bar(1), not bar(1, 9):
+  // foo() clobbers the caller-saved r3, so the stale r3 is not bar's argument.
+  std::vector<ir::Stmt> stmts;
+  stmts.push_back(ir::assign(3, ir::constant(9)));
+  stmts.push_back(ir::assign(2, ir::call("foo", {})));
+  stmts.push_back(ir::assign(2, ir::constant(1)));
+  stmts.push_back(ir::assign(2, ir::call("bar", {ir::reg(2), ir::reg(3)})));
+  ir::Function fn = one_block(std::move(stmts), ir::reg(2));
+  std::string c = decompile(std::move(fn));
+  CHECK(contains(c, "bar(1)"));
+  CHECK(!contains(c, "bar(1, 9)"));
 }
 
 TEST("call with unused result is not eliminated") {
