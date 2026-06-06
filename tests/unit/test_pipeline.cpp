@@ -235,6 +235,22 @@ TEST("call argument set in a predecessor block is recovered") {
   CHECK(contains(c, "g(v"));    // g is called with the recovered local
 }
 
+TEST("call result threaded as the next call's argument is recovered") {
+  // r2 = alloc() ; *(r9) = r2 ; r3 = 0 ; r4 = 8 ; memset()   (memset's result dead)
+  // The alloc result is read (stored) before memset, so it is live and passed:
+  // memset(r2, 0, 8) -- the classic p = alloc(); memset(p, 0, n) idiom.
+  std::vector<ir::Stmt> stmts;
+  stmts.push_back(ir::assign(2, ir::call("alloc", {})));
+  stmts.push_back(ir::store(ir::reg(9), ir::reg(2), 4));
+  stmts.push_back(ir::assign(3, ir::constant(0)));
+  stmts.push_back(ir::assign(4, ir::constant(8)));
+  stmts.push_back(ir::assign(2, ir::call("memset", {})));
+  ir::Function fn = one_block(std::move(stmts), ir::constant(0));
+  std::string c = decompile(std::move(fn));
+  CHECK(contains(c, "memset(") && !contains(c, "memset()"));  // got its arguments
+  CHECK(contains(c, ", 0, 8)"));                              // all three present
+}
+
 TEST("argument clobbered by an earlier call is not passed") {
   // r3 = 9 ; r2 = foo() ; r2 = 1 ; bar(...)   ->  bar(1), not bar(1, 9):
   // foo() clobbers the caller-saved r3, so the stale r3 is not bar's argument.

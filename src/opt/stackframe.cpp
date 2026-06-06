@@ -116,15 +116,45 @@ namespace {
 
 bool is_call_expr(const ir::ExprPtr &e) { return e && e->kind == ir::ExprKind::Call; }
 
+// Mark argument registers (r2..r7) read by `e`.
+void collect_arg_reads(const ir::ExprPtr &e, std::array<bool, 8> &rd) {
+  if (!e) return;
+  switch (e->kind) {
+    case ir::ExprKind::Reg:
+      if (e->reg >= 2 && e->reg <= 7) rd[e->reg] = true;
+      return;
+    case ir::ExprKind::BinOp:
+      collect_arg_reads(e->a, rd); collect_arg_reads(e->b, rd); return;
+    case ir::ExprKind::UnOp:
+    case ir::ExprKind::Cast:
+    case ir::ExprKind::Load:
+      collect_arg_reads(e->a, rd); return;
+    case ir::ExprKind::Select:
+      collect_arg_reads(e->a, rd); collect_arg_reads(e->b, rd);
+      if (!e->args.empty()) collect_arg_reads(e->args[0], rd);
+      return;
+    case ir::ExprKind::Call:
+      collect_arg_reads(e->a, rd);
+      for (const auto &x : e->args) collect_arg_reads(x, rd);
+      return;
+    default:
+      return;
+  }
+}
+
 // Argument registers (r2..r7) that were set up for the call at (blk, stmt_i):
 // those assigned since the most recent preceding call along the unique
 // (single-predecessor) path. A call clobbers the caller-saved arg registers, so
-// it acts as a barrier (but still defines its own result r2). `target_reg` is
-// the callee-pointer register of an indirect call (excluded), else -1.
+// it acts as a barrier. The barrier call's own result (r2) is claimed only if it
+// was read between the call and here (i.e. the value is live and threaded on,
+// as in `p = alloc(); ...; memset(p, ..)`) — not if it was overwritten unread
+// (as in two independent sequential calls). `target_reg` is the callee-pointer
+// register of an indirect call (excluded), else -1.
 std::vector<ir::ExprPtr> args_for_call(const ir::Function &fn,
                                        const std::vector<std::vector<int>> &preds,
                                        int blk, int stmt_i, int target_reg) {
-  std::array<bool, 8> defined{};  // defined[r] for r in 2..7
+  std::array<bool, 8> defined{};   // defined[r] for r in 2..7
+  std::array<bool, 8> read_seen{}; // r read since the call site (scanning back)
   int cur = blk;
   bool first = true;
   std::set<int> visited;
@@ -138,13 +168,20 @@ std::vector<ir::ExprPtr> args_for_call(const ir::Function &fn,
     bool barrier = false;
     for (int i = from; i >= 0; --i) {
       const ir::Stmt &s = b.stmts[i];
-      // A previous call clobbers the caller-saved arg registers; stop here.
-      // Its own result is ambiguous (used as the next arg, or dead), so don't
-      // claim it — preferring a missing arg over an invented one.
-      if (s.kind == ir::StmtKind::Assign && is_call_expr(s.expr)) { barrier = true; break; }
+      if (s.kind == ir::StmtKind::Assign && is_call_expr(s.expr)) {
+        // Previous call: clobbers caller-saved regs. Claim its result only if
+        // that result has been read since (live), then stop.
+        if (s.dst_reg >= 2 && s.dst_reg <= 7 && s.dst_reg != target_reg &&
+            read_seen[s.dst_reg])
+          defined[s.dst_reg] = true;
+        barrier = true;
+        break;
+      }
       if (s.kind == ir::StmtKind::Assign && s.dst_reg >= 2 && s.dst_reg <= 7 &&
           s.dst_reg != target_reg)
         defined[s.dst_reg] = true;
+      collect_arg_reads(s.expr, read_seen);
+      collect_arg_reads(s.addr, read_seen);
     }
     if (barrier || preds[cur].size() != 1) break;
     cur = preds[cur][0];  // follow the single dominating predecessor
