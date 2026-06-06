@@ -433,20 +433,23 @@ class Structurer {
       }
 
       int merge = ipdom(n);
-      if (fth == merge) {
-        os << ind_s(ind) << "if (" << render(*cond, vm_, 0) << ") {\n";
-        emit_seq(taken, merge, ind + 1, os);
-        os << ind_s(ind) << "}\n";
-      } else if (taken == merge) {
-        os << ind_s(ind) << "if (" << render(*negate(cond), vm_, 0) << ") {\n";
-        emit_seq(fth, merge, ind + 1, os);
-        os << ind_s(ind) << "}\n";
+      // Render both arms, then drop/ invert empty ones for readability.
+      std::ostringstream then_ss, else_ss;  // then = cond true (taken), else = cond false (fth)
+      emit_seq(taken, merge, ind + 1, then_ss);
+      emit_seq(fth, merge, ind + 1, else_ss);
+      std::string thn = then_ss.str(), els = else_ss.str();
+      auto blank = [](const std::string &s) {
+        return s.find_first_not_of(" \t\n\r") == std::string::npos;
+      };
+      if (blank(thn) && blank(els)) {
+        // both empty: the condition is pure, so nothing to emit
+      } else if (blank(els)) {
+        os << ind_s(ind) << "if (" << render(*cond, vm_, 0) << ") {\n" << thn << ind_s(ind) << "}\n";
+      } else if (blank(thn)) {
+        os << ind_s(ind) << "if (" << render(*negate(cond), vm_, 0) << ") {\n" << els << ind_s(ind) << "}\n";
       } else {
-        os << ind_s(ind) << "if (" << render(*cond, vm_, 0) << ") {\n";
-        emit_seq(taken, merge, ind + 1, os);
-        os << ind_s(ind) << "} else {\n";
-        emit_seq(fth, merge, ind + 1, os);
-        os << ind_s(ind) << "}\n";
+        os << ind_s(ind) << "if (" << render(*cond, vm_, 0) << ") {\n" << thn
+           << ind_s(ind) << "} else {\n" << els << ind_s(ind) << "}\n";
       }
       n = merge;
     }

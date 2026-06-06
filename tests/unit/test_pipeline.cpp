@@ -430,6 +430,27 @@ TEST("stack frame recovery: prologue/epilogue hidden, slot named") {
   CHECK(contains(c, "return var_14;"));
 }
 
+TEST("empty then-branch is inverted, no empty else") {
+  // B0: if (a1 != 0) {} else { v=7 }  ->  if (a1 == 0) { v = 7; }
+  ir::Function fn; fn.name = "f"; fn.entry = 0;
+  ir::Block b0; b0.entry = 0;
+  b0.term = cbr_t(ir::binop(ir::BinOp::CmpNe, ir::reg(2), ir::constant(0)), /*taken=*/4, /*fth=*/2);
+  fn.blocks.push_back(std::move(b0));
+  ir::Block b1; b1.entry = 2;
+  b1.stmts.push_back(ir::assign(3, ir::constant(7)));
+  b1.term = fall_t(4);
+  fn.blocks.push_back(std::move(b1));
+  ir::Block b2; b2.entry = 4;
+  b2.term = ret_t(ir::reg(3));
+  fn.blocks.push_back(std::move(b2));
+
+  std::string c = decompile(std::move(fn));
+  CHECK(contains(c, "if (a1 == 0) {"));
+  CHECK(contains(c, "= 7;"));
+  CHECK(!contains(c, "else"));
+  CHECK(!contains(c, "{\n  }"));   // no empty block
+}
+
 TEST("pre-test while loop structuring") {
   // B0: C = r2 < r3 ; bf B2(exit)    (stay in loop while a<b)
   // B1: r2 = r2 + 1 ; goto B0        (back edge)
