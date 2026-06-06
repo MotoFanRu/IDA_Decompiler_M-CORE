@@ -5,6 +5,7 @@
 #include <ida.hpp>
 #include <idp.hpp>
 #include <ua.hpp>
+#include <bytes.hpp>
 #include <funcs.hpp>
 #include <gdl.hpp>
 #include <name.hpp>
@@ -100,12 +101,27 @@ void lift_insn(const insn_t &insn, ir::Block &blk) {
       blk.stmts.push_back(ir::assign(ir::kRegC, ir::binop(ir::BinOp::CmpNe, ir::reg(d), ir::constant(0)), ea));
       break;
 
-    // Bit generate (d = 1<<n). Only the variants that expose the immediate;
-    // the base bgeni/bmaski encode it in the opcode (not surfaced) -> still TODO.
+    // bgeni d = 1<<n ; bmaski d = (1<<n)-1 (n==0 means 32 -> all ones). For all
+    // variants the bit number is the 5-bit field [8:4] of the raw instruction
+    // word (binutils mcore-opc); the module splits it across variants and does
+    // not surface the full value, so read it from the bytes.
+    case mcore_bgeni:
     case mcore_bgeni_0:
-    case mcore_bgeni_1:
-      blk.stmts.push_back(ir::assign(d, ir::constant((int64_t)(1u << imm)), ea));
+    case mcore_bgeni_1: {
+      uint32_t w = ((uint32_t)get_byte((ea_t)ea) << 8) | get_byte((ea_t)ea + 1);
+      int n = (w >> 4) & 0x1f;
+      blk.stmts.push_back(ir::assign(d, ir::constant((int64_t)(uint32_t)(1u << n)), ea));
       break;
+    }
+    case mcore_bmaski:
+    case mcore_bmaski_0:
+    case mcore_bmaski_1: {
+      uint32_t w = ((uint32_t)get_byte((ea_t)ea) << 8) | get_byte((ea_t)ea + 1);
+      int n = (w >> 4) & 0x1f;
+      uint32_t mask = (n == 0) ? 0xFFFFFFFFu : ((1u << n) - 1);
+      blk.stmts.push_back(ir::assign(d, ir::constant((int64_t)mask), ea));
+      break;
+    }
     case mcore_ixw:  // d = d + s*4
       blk.stmts.push_back(ir::assign(d, ir::binop(ir::BinOp::Add, ir::reg(d),
           ir::binop(ir::BinOp::Mul, ir::reg(s), ir::constant(4))), ea));
