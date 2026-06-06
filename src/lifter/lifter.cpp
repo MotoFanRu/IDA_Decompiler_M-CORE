@@ -92,6 +92,20 @@ void lift_insn(const insn_t &insn, ir::Block &blk) {
 
     case mcore_mult: rr(ir::BinOp::Mul); break;
     case mcore_andi: ri(ir::BinOp::And); break;
+    case mcore_rsubi:  // d = imm - d
+      blk.stmts.push_back(ir::assign(d, ir::binop(ir::BinOp::Sub, ir::constant(imm), ir::reg(d)), ea));
+      break;
+    case mcore_decne:  // d = d - 1 ; C = (d != 0)
+      blk.stmts.push_back(ir::assign(d, ir::binop(ir::BinOp::Sub, ir::reg(d), ir::constant(1)), ea));
+      blk.stmts.push_back(ir::assign(ir::kRegC, ir::binop(ir::BinOp::CmpNe, ir::reg(d), ir::constant(0)), ea));
+      break;
+
+    // Bit generate (d = 1<<n). Only the variants that expose the immediate;
+    // the base bgeni/bmaski encode it in the opcode (not surfaced) -> still TODO.
+    case mcore_bgeni_0:
+    case mcore_bgeni_1:
+      blk.stmts.push_back(ir::assign(d, ir::constant((int64_t)(1u << imm)), ea));
+      break;
     case mcore_ixw:  // d = d + s*4
       blk.stmts.push_back(ir::assign(d, ir::binop(ir::BinOp::Add, ir::reg(d),
           ir::binop(ir::BinOp::Mul, ir::reg(s), ir::constant(4))), ea));
@@ -187,6 +201,21 @@ bool lift_terminator(const insn_t &insn, ir::Block &blk, ea_t fallthrough) {
       t.kind = ir::TermKind::Goto;
       t.target = (uint32_t)insn.ops[0].addr;
       return true;
+    case mcore_jmpi: {  // tail jump through the literal pool: a tail call
+      ea_t tgt = (ea_t)insn.ops[1].addr;
+      qstring nm;
+      if (get_name(&nm, tgt) <= 0 || nm.empty()) nm.sprnt("sub_%X", (unsigned)tgt);
+      std::vector<ir::ExprPtr> args;
+      std::set<int> defined;
+      for (const auto &st : blk.stmts)
+        if (st.kind == ir::StmtKind::Assign && st.dst_reg >= 2 && st.dst_reg <= 7)
+          defined.insert(st.dst_reg);
+      for (int r = 2; r <= 7 && defined.count(r); ++r) args.push_back(ir::reg(r));
+      t.kind = ir::TermKind::Return;
+      t.value = ir::call(nm.c_str(), std::move(args));
+      t.has_value = true;
+      return true;
+    }
     case mcore_jmp:
       if (insn.ops[0].reg == ir::kRegLR) {  // jmp r15 == rts
         t.kind = ir::TermKind::Return;
