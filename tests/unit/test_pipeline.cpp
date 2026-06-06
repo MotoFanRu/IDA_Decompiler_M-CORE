@@ -204,6 +204,41 @@ TEST("call with unused result is not eliminated") {
   CHECK(contains(c, "return 0;"));
 }
 
+TEST("dead call result renders as a void-style statement") {
+  // r2 = foo() ; r2 = bar() ; return r2   -> foo();  (its result is dead)
+  std::vector<ir::Stmt> stmts;
+  stmts.push_back(ir::assign(2, ir::call("foo", {})));
+  stmts.push_back(ir::assign(2, ir::call("bar", {})));
+  ir::Function fn = one_block(std::move(stmts), ir::reg(2));
+  std::string c = decompile(std::move(fn));
+  CHECK(contains(c, "foo();"));      // dead result -> bare call
+  CHECK(!contains(c, "= foo("));     // no assignment of the dead result
+}
+
+TEST("C condition survives the compared register being overwritten") {
+  // r2 = *(r5) ; r8 = r2 ; C = (r2 != 0) ; r2 = 0 ; if (C) {body} ; return r2
+  // The condition must use the saved copy (r8), NOT the now-zero r2 -> never '0 != 0'.
+  ir::Function fn; fn.name = "f"; fn.entry = 0;
+  ir::Block b0; b0.entry = 0;
+  b0.stmts.push_back(ir::assign(2, ir::load(ir::reg(5), 4)));
+  b0.stmts.push_back(ir::assign(8, ir::reg(2)));
+  b0.stmts.push_back(ir::assign(ir::kRegC, ir::binop(ir::BinOp::CmpNe, ir::reg(2), ir::constant(0))));
+  b0.stmts.push_back(ir::assign(2, ir::constant(0)));
+  b0.term = cbr_t(ir::reg(ir::kRegC), /*taken=*/2, /*fth=*/4);
+  fn.blocks.push_back(std::move(b0));
+  ir::Block b1; b1.entry = 2;
+  b1.stmts.push_back(ir::assign(2, ir::constant(7)));
+  b1.term = fall_t(4);
+  fn.blocks.push_back(std::move(b1));
+  ir::Block b2; b2.entry = 4;
+  b2.term = ret_t(ir::reg(2));
+  fn.blocks.push_back(std::move(b2));
+
+  std::string c = decompile(std::move(fn));
+  CHECK(!contains(c, "0 != 0"));   // the bug: must not collapse to a constant compare
+  CHECK(contains(c, "!= 0"));      // a real non-null check remains
+}
+
 TEST("cast renders and folds") {
   vars::VarMap vm;
   CHECK(emit::emit_expr(*ir::cast(1, false, ir::reg(2)), vm) == "(unsigned char)r2");

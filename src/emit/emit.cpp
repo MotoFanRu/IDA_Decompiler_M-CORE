@@ -137,6 +137,8 @@ std::string render(const ir::Expr &e, const vars::VarMap &vm, int min_prec) {
 std::string stmt_str(const ir::Stmt &s, const vars::VarMap &vm) {
   switch (s.kind) {
     case ir::StmtKind::Assign:
+      if (s.dst_reg == ir::kRegDiscard)  // dead result (void call): expression statement
+        return (s.expr ? render(*s.expr, vm, 0) : "?") + ";";
       return vm.name_of(s.dst_reg) + " = " + (s.expr ? render(*s.expr, vm, 0) : "?") + ";";
     case ir::StmtKind::Store: {
       std::string arr = s.addr ? array_form(*s.addr, s.size, vm) : std::string();
@@ -509,7 +511,8 @@ std::string emit_c(const ir::Function &fn, const vars::VarMap &vm) {
   std::set<int> used;
   for (const auto &b : fn.blocks) {
     for (const auto &s : b.stmts) {
-      if (s.kind == ir::StmtKind::Assign) used.insert(s.dst_reg);
+      if (s.kind == ir::StmtKind::Assign && s.dst_reg != ir::kRegDiscard)
+        used.insert(s.dst_reg);
       collect_ids(s.expr, used);
       collect_ids(s.addr, used);
     }

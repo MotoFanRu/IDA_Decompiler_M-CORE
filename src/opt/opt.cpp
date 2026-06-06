@@ -234,6 +234,37 @@ std::vector<ir::ExprPtr> compute_c_reaching(const ir::Function &fn) {
   return c_in;
 }
 
+bool uses_reg(const ir::ExprPtr &e, int reg) {
+  if (!e) return false;
+  if (e->kind == ir::ExprKind::Reg) return e->reg == reg;
+  if (uses_reg(e->a, reg) || uses_reg(e->b, reg)) return true;
+  for (const auto &x : e->args) if (uses_reg(x, reg)) return true;
+  return false;
+}
+
+// Replace register `from` with register `to` throughout `e`.
+ir::ExprPtr subst_reg(const ir::ExprPtr &e, int from, int to) {
+  if (!e) return e;
+  switch (e->kind) {
+    case ir::ExprKind::Reg: return e->reg == from ? ir::reg(to) : e;
+    case ir::ExprKind::UnOp: return ir::unop(e->unop, subst_reg(e->a, from, to));
+    case ir::ExprKind::Cast: return ir::cast(e->size, e->is_signed, subst_reg(e->a, from, to));
+    case ir::ExprKind::Load: return ir::load(subst_reg(e->a, from, to), e->size);
+    case ir::ExprKind::BinOp:
+      return ir::binop(e->binop, subst_reg(e->a, from, to), subst_reg(e->b, from, to));
+    case ir::ExprKind::Select:
+      return ir::select(subst_reg(e->a, from, to), subst_reg(e->b, from, to),
+                        subst_reg(e->args.empty() ? nullptr : e->args[0], from, to));
+    case ir::ExprKind::Call: {
+      std::vector<ir::ExprPtr> args;
+      for (const auto &x : e->args) args.push_back(subst_reg(x, from, to));
+      return e->a ? ir::call_indirect(subst_reg(e->a, from, to), std::move(args))
+                  : ir::call(e->name, std::move(args));
+    }
+    default: return e;
+  }
+}
+
 } // namespace
 
 void simplify(ir::Function &fn) {
@@ -248,6 +279,14 @@ void simplify(ir::Function &fn) {
     std::map<int, ir::ExprPtr> cprop;  // const-only, intra-block
     ir::ExprPtr c_cur = c_in[bi];
 
+    // Value numbering so the pending C condition can survive a register being
+    // overwritten before the branch: if r is in the condition and is reassigned,
+    // rewrite the condition to an equivalent register that still holds the value
+    // (e.g. a saved copy). vid default = a unique per-register "entry" value.
+    std::map<int, int> vid;
+    int vctr = 0;
+    auto vidof = [&](int r) { auto it = vid.find(r); return it != vid.end() ? it->second : -(r + 1); };
+
     auto resolve = [&](const ir::ExprPtr &e) {
       return fold_not(subst_c(rewrite(e, cprop), c_cur));
     };
@@ -260,13 +299,21 @@ void simplify(ir::Function &fn) {
       }
       if (s.kind != ir::StmtKind::Assign) { cprop.clear(); c_cur = nullptr; continue; }
       s.expr = resolve(s.expr);
+
+      // Rescue the C condition before this assignment overwrites a register it uses.
+      if (c_cur && s.dst_reg != ir::kRegC && uses_reg(c_cur, s.dst_reg)) {
+        int tv = vidof(s.dst_reg);
+        for (const auto &kv : vid)
+          if (kv.first != s.dst_reg && kv.second == tv) { c_cur = subst_reg(c_cur, s.dst_reg, kv.first); break; }
+      }
+
       if (has_call(s.expr)) { cprop.clear(); c_cur = nullptr; }  // call clobbers regs + C
       if (s.dst_reg == ir::kRegC) {
         c_cur = s.expr;
-      } else if (is_const(s.expr)) {
-        cprop[s.dst_reg] = s.expr;
       } else {
-        cprop.erase(s.dst_reg);
+        if (is_const(s.expr)) cprop[s.dst_reg] = s.expr;
+        else cprop.erase(s.dst_reg);
+        vid[s.dst_reg] = (s.expr && s.expr->kind == ir::ExprKind::Reg) ? vidof(s.expr->reg) : ++vctr;
       }
     }
 
@@ -300,14 +347,6 @@ void simplify(ir::Function &fn) {
 }
 
 namespace {
-
-bool uses_reg(const ir::ExprPtr &e, int reg) {
-  if (!e) return false;
-  if (e->kind == ir::ExprKind::Reg) return e->reg == reg;
-  if (uses_reg(e->a, reg) || uses_reg(e->b, reg)) return true;
-  for (const auto &x : e->args) if (uses_reg(x, reg)) return true;
-  return false;
-}
 
 void reads_set(const ir::ExprPtr &e, std::set<int> &s) {
   if (!e) return;
@@ -407,9 +446,10 @@ void inline_locals(ir::Function &fn) {
     auto &stmts = fn.blocks[i].stmts;
     for (auto it = stmts.rbegin(); it != stmts.rend(); ++it) {
       ir::Stmt &s = *it;
-      if (s.kind == ir::StmtKind::Assign && s.dst_reg != ir::kRegC && !has_call(s.expr) &&
+      if (s.kind == ir::StmtKind::Assign && s.dst_reg != ir::kRegC &&
           live.find(s.dst_reg) == live.end()) {
-        continue;  // dead store
+        if (!has_call(s.expr)) continue;       // dead store: drop
+        s.dst_reg = ir::kRegDiscard;           // dead result of a call: keep the call only
       }
       if (s.kind == ir::StmtKind::Assign) live.erase(s.dst_reg);
       reads_set(s.expr, live);
