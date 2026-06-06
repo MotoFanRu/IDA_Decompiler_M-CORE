@@ -12,6 +12,7 @@
 #include <lines.hpp>
 
 #include <algorithm>
+#include <map>
 #include <set>
 #include <vector>
 
@@ -333,6 +334,30 @@ bool lift_function(func_t *pfn, ir::Function &out, qstring &err) {
               if (b.entry == out.entry) return false;
               return a.entry < b.entry;
             });
+
+  // Drop blocks unreachable from the entry (e.g. trailing self-loop fragments
+  // after a return/tail-call) so they don't force the goto fallback.
+  if (!out.blocks.empty()) {
+    std::map<uint32_t, int> idx;
+    for (size_t i = 0; i < out.blocks.size(); ++i) idx[out.blocks[i].entry] = (int)i;
+    std::vector<bool> reach(out.blocks.size(), false);
+    std::vector<int> stack{0};
+    reach[0] = true;
+    while (!stack.empty()) {
+      int i = stack.back(); stack.pop_back();
+      const ir::Terminator &t = out.blocks[i].term;
+      auto go = [&](uint32_t ea) {
+        auto it = idx.find(ea);
+        if (it != idx.end() && !reach[it->second]) { reach[it->second] = true; stack.push_back(it->second); }
+      };
+      if (t.kind == ir::TermKind::Goto || t.kind == ir::TermKind::Fallthrough) go(t.target);
+      if (t.kind == ir::TermKind::CondBranch) { go(t.target); go(t.fallthrough); }
+    }
+    std::vector<ir::Block> kept;
+    for (size_t i = 0; i < out.blocks.size(); ++i)
+      if (reach[i]) kept.push_back(std::move(out.blocks[i]));
+    out.blocks = std::move(kept);
+  }
 
   return true;
 }
