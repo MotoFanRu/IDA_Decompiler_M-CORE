@@ -3,6 +3,7 @@
 #include "ir/ir.h"
 #include "vars/vars.h"
 
+#include <algorithm>
 #include <map>
 #include <set>
 #include <sstream>
@@ -123,11 +124,27 @@ ir::ExprPtr negate(const ir::ExprPtr &e) {
 
 std::string ind_s(int n) { return std::string(n * 2, ' '); }
 
+void collect_ids(const ir::ExprPtr &e, std::set<int> &s) {
+  if (!e) return;
+  if (e->kind == ir::ExprKind::Reg) s.insert(e->reg);
+  collect_ids(e->a, s);
+  collect_ids(e->b, s);
+  for (const auto &x : e->args) collect_ids(x, s);
+}
+
+std::string return_stmt(const ir::Terminator &t, const vars::VarMap &vm, bool is_void) {
+  // A void function's bare ABI-return register carries no real value.
+  if (is_void && t.value && t.value->kind == ir::ExprKind::Reg) return "return;";
+  if (t.has_value && t.value) return "return " + render(*t.value, vm, 0) + ";";
+  return "return;";
+}
+
 // --------------------------------------------------------------------------
 
 class Structurer {
  public:
-  Structurer(const ir::Function &fn, const vars::VarMap &vm) : fn_(fn), vm_(vm) {
+  Structurer(const ir::Function &fn, const vars::VarMap &vm, bool is_void)
+      : fn_(fn), vm_(vm), is_void_(is_void) {
     n_ = (int)fn_.blocks.size();
     exit_ = n_;
     for (int i = 0; i < n_; ++i) idx_[fn_.blocks[i].entry] = i;
@@ -311,10 +328,7 @@ class Structurer {
       const ir::Terminator &t = fn_.blocks[n].term;
 
       if (t.kind == ir::TermKind::Return) {
-        if (t.has_value && t.value)
-          os << ind_s(ind) << "return " << render(*t.value, vm_, 0) << ";\n";
-        else
-          os << ind_s(ind) << "return;\n";
+        os << ind_s(ind) << return_stmt(t, vm_, is_void_) << "\n";
         return;
       }
 
@@ -370,10 +384,11 @@ class Structurer {
   std::set<int> visited_;
   std::vector<std::pair<int, int>> loopctx_;  // (header, exit)
   bool structurable_ = true;
+  bool is_void_ = false;
 };
 
 // Goto-based fallback (always correct).
-std::string emit_goto(const ir::Function &fn, const vars::VarMap &vm) {
+std::string emit_goto(const ir::Function &fn, const vars::VarMap &vm, bool is_void) {
   std::ostringstream os;
   std::set<uint32_t> targets;
   for (const auto &b : fn.blocks) {
@@ -391,7 +406,7 @@ std::string emit_goto(const ir::Function &fn, const vars::VarMap &vm) {
     const ir::Terminator &t = b.term;
     switch (t.kind) {
       case ir::TermKind::Return:
-        os << (t.has_value && t.value ? "  return " + render(*t.value, vm, 0) + ";\n" : "  return;\n");
+        os << "  " << return_stmt(t, vm, is_void) << "\n";
         break;
       case ir::TermKind::Goto:
       case ir::TermKind::Fallthrough:
@@ -411,6 +426,22 @@ std::string emit_goto(const ir::Function &fn, const vars::VarMap &vm) {
 std::string emit_expr(const ir::Expr &e, const vars::VarMap &vm) { return render(e, vm, 0); }
 
 std::string emit_c(const ir::Function &fn, const vars::VarMap &vm) {
+  // Collect referenced register ids (for local declarations). Return-type/void
+  // recovery needs a function prototype we do not have (the synthetic `return r2`
+  // makes an unset r2 indistinguishable from a passed-through parameter), so the
+  // return type stays int.
+  std::set<int> used;
+  for (const auto &b : fn.blocks) {
+    for (const auto &s : b.stmts) {
+      if (s.kind == ir::StmtKind::Assign) used.insert(s.dst_reg);
+      collect_ids(s.expr, used);
+      collect_ids(s.addr, used);
+    }
+    collect_ids(b.term.cond, used);
+    collect_ids(b.term.value, used);
+  }
+  const bool is_void = false;
+
   std::ostringstream os;
   const std::string name = fn.name.empty() ? "sub" : fn.name;
   os << "int " << name << "(";
@@ -423,9 +454,21 @@ std::string emit_c(const ir::Function &fn, const vars::VarMap &vm) {
     }
   }
   os << ")\n{\n";
+
+  // Declare locals: used ids that are not parameters, sp/lr, or the C bit.
+  std::set<int> param_set(vm.params.begin(), vm.params.end());
+  bool any_decl = false;
+  for (int id : used) {
+    if (param_set.count(id) || id == ir::kRegSP || id == ir::kRegLR || id == ir::kRegC)
+      continue;
+    os << "  int " << vm.name_of(id) << ";\n";
+    any_decl = true;
+  }
+  if (any_decl) os << "\n";
+
   if (!fn.blocks.empty()) {
-    Structurer st(fn, vm);
-    os << (st.structurable() ? st.run() : emit_goto(fn, vm));
+    Structurer st(fn, vm, is_void);
+    os << (st.structurable() ? st.run() : emit_goto(fn, vm, is_void));
   }
   os << "}\n";
   return os.str();

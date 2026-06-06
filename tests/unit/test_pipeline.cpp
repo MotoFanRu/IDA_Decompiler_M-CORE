@@ -222,6 +222,18 @@ TEST("large constant renders hex, small decimal") {
   CHECK(emit::emit_expr(*ir::constant(-1), vm) == "-1");
 }
 
+TEST("locals are declared") {
+  // v = *a1 (load, not inlinable); used twice -> kept as a declared local.
+  std::vector<ir::Stmt> stmts;
+  stmts.push_back(ir::assign(4, ir::load(ir::reg(2), 4)));   // v1 = *(int*)a1
+  stmts.push_back(ir::store(ir::reg(3), ir::reg(4), 4));      // *(a2) = v1   (use 1)
+  ir::Function fn = one_block(std::move(stmts), ir::reg(4));   // return v1   (use 2)
+  std::string c = decompile(std::move(fn));
+  CHECK(contains(c, "int v1;"));
+  CHECK(contains(c, "v1 = *(int *)(a1);"));
+  CHECK(contains(c, "int f(int a1, int a2)"));
+}
+
 TEST("single-use temporary is inlined") {
   // v_tmp = a + b ; return v_tmp   ->   return a1 + a2;
   std::vector<ir::Stmt> stmts;
