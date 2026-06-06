@@ -222,6 +222,20 @@ TEST("large constant renders hex, small decimal") {
   CHECK(emit::emit_expr(*ir::constant(-1), vm) == "-1");
 }
 
+TEST("conditional move renders as a ternary with resolved condition") {
+  // C = r2 < r3 ; movt r4,r5 (r4 = C ? r5 : r4) ; return r4
+  ir::Function fn; fn.name = "f"; fn.entry = 0;
+  ir::Block b; b.entry = 0;
+  b.stmts.push_back(ir::assign(ir::kRegC, ir::binop(ir::BinOp::CmpLt, ir::reg(2), ir::reg(3))));
+  b.stmts.push_back(ir::assign(4, ir::select(ir::reg(ir::kRegC), ir::reg(5), ir::reg(4))));
+  b.term = ret_t(ir::reg(4));
+  fn.blocks.push_back(std::move(b));
+  std::string c = decompile(std::move(fn));
+  CHECK(contains(c, "a1 < a2 ?"));   // condition resolved into the ternary
+  CHECK(!contains(c, "cond"));
+  CHECK(!contains(c, "r100"));
+}
+
 TEST("locals are declared") {
   // v = *a1 (load, not inlinable); used twice -> kept as a declared local.
   std::vector<ir::Stmt> stmts;

@@ -178,6 +178,43 @@ void lift_insn(const insn_t &insn, ir::Block &blk) {
       break;
     }
 
+    case mcore_divs:  // M-CORE divides by the implicit divisor register r1
+    case mcore_divu:
+      blk.stmts.push_back(ir::assign(d, ir::binop(ir::BinOp::Div, ir::reg(d), ir::reg(1)), ea));
+      break;
+    case mcore_lsl:  rr(ir::BinOp::Shl); break;  // variable shifts
+    case mcore_lsr:  rr(ir::BinOp::Shr); break;
+    case mcore_asr:  rr(ir::BinOp::Sar); break;
+    case mcore_bgenr:  // d = 1 << s
+      blk.stmts.push_back(ir::assign(d, ir::binop(ir::BinOp::Shl, ir::constant(1), ir::reg(s)), ea));
+      break;
+    case mcore_tst:    // C = (d & s) != 0
+      blk.stmts.push_back(ir::assign(ir::kRegC,
+          ir::binop(ir::BinOp::CmpNe, ir::binop(ir::BinOp::And, ir::reg(d), ir::reg(s)), ir::constant(0)), ea));
+      break;
+
+    // Conditional moves (read C): d = C ? then : else.
+    case mcore_movt:  // if C: d = s
+      blk.stmts.push_back(ir::assign(d, ir::select(ir::reg(ir::kRegC), ir::reg(s), ir::reg(d)), ea)); break;
+    case mcore_movf:  // if !C: d = s
+      blk.stmts.push_back(ir::assign(d, ir::select(ir::reg(ir::kRegC), ir::reg(d), ir::reg(s)), ea)); break;
+    case mcore_clrt:  // if C: d = 0
+      blk.stmts.push_back(ir::assign(d, ir::select(ir::reg(ir::kRegC), ir::constant(0), ir::reg(d)), ea)); break;
+    case mcore_clrf:  // if !C: d = 0
+      blk.stmts.push_back(ir::assign(d, ir::select(ir::reg(ir::kRegC), ir::reg(d), ir::constant(0)), ea)); break;
+    case mcore_inct:  // if C: d = d + 1
+      blk.stmts.push_back(ir::assign(d, ir::select(ir::reg(ir::kRegC),
+          ir::binop(ir::BinOp::Add, ir::reg(d), ir::constant(1)), ir::reg(d)), ea)); break;
+    case mcore_decf:  // if !C: d = d - 1
+      blk.stmts.push_back(ir::assign(d, ir::select(ir::reg(ir::kRegC), ir::reg(d),
+          ir::binop(ir::BinOp::Sub, ir::reg(d), ir::constant(1))), ea)); break;
+    case mcore_incf:  // if !C: d = d + 1
+      blk.stmts.push_back(ir::assign(d, ir::select(ir::reg(ir::kRegC), ir::reg(d),
+          ir::binop(ir::BinOp::Add, ir::reg(d), ir::constant(1))), ea)); break;
+    case mcore_dect:  // if C: d = d - 1
+      blk.stmts.push_back(ir::assign(d, ir::select(ir::reg(ir::kRegC),
+          ir::binop(ir::BinOp::Sub, ir::reg(d), ir::constant(1)), ir::reg(d)), ea)); break;
+
     // Memory: ops[0] = value/dest reg, ops[1] = (base, offset).
     case mcore_ld:   load_to(4); break;
     case mcore_ld_h: load_to(2); break;

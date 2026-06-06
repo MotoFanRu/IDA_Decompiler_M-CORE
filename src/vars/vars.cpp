@@ -28,8 +28,10 @@ void collect_regs(const ir::ExprPtr &e, std::vector<int> &out) {
       collect_regs(e->a, out);
       collect_regs(e->b, out);
       break;
+    case ir::ExprKind::Select:
     case ir::ExprKind::Call:
-      collect_regs(e->a, out);  // indirect target (if any)
+      collect_regs(e->a, out);  // cond / indirect target
+      collect_regs(e->b, out);  // then-value (null for Call)
       for (const auto &arg : e->args) collect_regs(arg, out);
       break;
   }

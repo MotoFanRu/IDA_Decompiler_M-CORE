@@ -18,6 +18,7 @@ struct OpInfo { const char *sym; int prec; };
 OpInfo binop_info(ir::BinOp op) {
   switch (op) {
     case ir::BinOp::Mul:   return {"*", 13};
+    case ir::BinOp::Div:   return {"/", 13};
     case ir::BinOp::Add:   return {"+", 12};
     case ir::BinOp::Sub:   return {"-", 12};
     case ir::BinOp::Shl:   return {"<<", 11};
@@ -93,6 +94,12 @@ std::string render(const ir::Expr &e, const vars::VarMap &vm, int min_prec) {
         s += render(*e.args[i], vm, 0);
       }
       return s + ")";
+    }
+    case ir::ExprKind::Select: {  // cond ? then : else  (lowest precedence)
+      std::string s = (e.a ? render(*e.a, vm, 4) : "") + " ? " +
+                      (e.b ? render(*e.b, vm, 4) : "") + " : " +
+                      (!e.args.empty() && e.args[0] ? render(*e.args[0], vm, 4) : "");
+      return 3 < min_prec ? "(" + s + ")" : s;
     }
   }
   return "?";

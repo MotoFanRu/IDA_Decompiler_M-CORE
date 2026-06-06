@@ -22,10 +22,10 @@ inline constexpr int kRegLR = 15;   // r15 link register
 inline constexpr int kRegC = 100;   // synthetic 1-bit condition (PSR C bit)
 inline constexpr int kStackBase = 0x40000;  // stack slots: kStackBase + byte offset
 
-enum class ExprKind { Const, Reg, BinOp, UnOp, Load, Call, Cast };
+enum class ExprKind { Const, Reg, BinOp, UnOp, Load, Call, Cast, Select };
 
 enum class BinOp {
-  Add, Sub, Mul,
+  Add, Sub, Mul, Div,
   And, Or, Xor,
   Shl, Shr, Sar,
   CmpLt, CmpHs, CmpNe, CmpEq,
@@ -68,6 +68,15 @@ inline ExprPtr cast(int size, bool is_signed, ExprPtr a) {
   e->size = size;
   e->is_signed = is_signed;
   e->a = std::move(a);
+  return e;
+}
+// Conditional move / ternary: cond ? then_val : else_val.
+inline ExprPtr select(ExprPtr cond, ExprPtr then_val, ExprPtr else_val) {
+  auto e = std::make_shared<Expr>();
+  e->kind = ExprKind::Select;
+  e->a = std::move(cond);
+  e->b = std::move(then_val);
+  e->args.push_back(std::move(else_val));
   return e;
 }
 inline ExprPtr reg(int r) {

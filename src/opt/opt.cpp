@@ -20,6 +20,7 @@ ir::ExprPtr fold_binop(ir::BinOp op, int64_t a, int64_t b) {
     case ir::BinOp::Add: return ir::constant(a + b);
     case ir::BinOp::Sub: return ir::constant(a - b);
     case ir::BinOp::Mul: return ir::constant(a * b);
+    case ir::BinOp::Div: return b != 0 ? ir::constant(a / b) : nullptr;
     case ir::BinOp::And: return ir::constant(a & b);
     case ir::BinOp::Or:  return ir::constant(a | b);
     case ir::BinOp::Xor: return ir::constant(a ^ b);
@@ -78,6 +79,13 @@ ir::ExprPtr rewrite(const ir::ExprPtr &e, const std::map<int, ir::ExprPtr> &defs
     }
     case ir::ExprKind::Load:
       return ir::load(rewrite(e->a, defs), e->size);
+    case ir::ExprKind::Select: {
+      ir::ExprPtr c = rewrite(e->a, defs);
+      ir::ExprPtr t = rewrite(e->b, defs);
+      ir::ExprPtr el = rewrite(e->args.empty() ? nullptr : e->args[0], defs);
+      if (is_const(c)) return c->value ? t : el;
+      return ir::select(c, t, el);
+    }
     case ir::ExprKind::Call: {
       std::vector<ir::ExprPtr> args;
       for (const auto &x : e->args) args.push_back(rewrite(x, defs));
@@ -95,6 +103,8 @@ bool has_call(const ir::ExprPtr &e) {
       e->kind == ir::ExprKind::Cast)
     return has_call(e->a);
   if (e->kind == ir::ExprKind::BinOp) return has_call(e->a) || has_call(e->b);
+  if (e->kind == ir::ExprKind::Select)
+    return has_call(e->a) || has_call(e->b) || (!e->args.empty() && has_call(e->args[0]));
   return false;
 }
 
@@ -108,6 +118,9 @@ ir::ExprPtr subst_c(const ir::ExprPtr &e, const ir::ExprPtr &c) {
     case ir::ExprKind::BinOp: return ir::binop(e->binop, subst_c(e->a, c), subst_c(e->b, c));
     case ir::ExprKind::Load:  return ir::load(subst_c(e->a, c), e->size);
     case ir::ExprKind::Cast:  return ir::cast(e->size, e->is_signed, subst_c(e->a, c));
+    case ir::ExprKind::Select:
+      return ir::select(subst_c(e->a, c), subst_c(e->b, c),
+                        subst_c(e->args.empty() ? nullptr : e->args[0], c));
     case ir::ExprKind::Call:  return e;  // C-bit never flows into call args here
   }
   return e;
@@ -140,8 +153,10 @@ void count_reads(const ir::ExprPtr &e, std::map<int, int> &reads) {
     case ir::ExprKind::Cast:
     case ir::ExprKind::Load: count_reads(e->a, reads); break;
     case ir::ExprKind::BinOp: count_reads(e->a, reads); count_reads(e->b, reads); break;
+    case ir::ExprKind::Select:
     case ir::ExprKind::Call:
       count_reads(e->a, reads);
+      count_reads(e->b, reads);
       for (const auto &x : e->args) count_reads(x, reads);
       break;
   }
@@ -159,6 +174,10 @@ bool expr_equal(const ir::ExprPtr &a, const ir::ExprPtr &b) {
     case ir::ExprKind::Load: return a->size == b->size && expr_equal(a->a, b->a);
     case ir::ExprKind::BinOp:
       return a->binop == b->binop && expr_equal(a->a, b->a) && expr_equal(a->b, b->b);
+    case ir::ExprKind::Select:
+      return expr_equal(a->a, b->a) && expr_equal(a->b, b->b) &&
+             expr_equal(a->args.empty() ? nullptr : a->args[0],
+                        b->args.empty() ? nullptr : b->args[0]);
     case ir::ExprKind::Call: return false;  // treat calls as never equal
   }
   return false;
@@ -324,6 +343,9 @@ ir::ExprPtr subst_inline(const ir::ExprPtr &e, const std::map<int, ir::ExprPtr> 
     case ir::ExprKind::UnOp:  return ir::unop(e->unop, subst_inline(e->a, defs));
     case ir::ExprKind::Cast:  return ir::cast(e->size, e->is_signed, subst_inline(e->a, defs));
     case ir::ExprKind::Load:  return ir::load(subst_inline(e->a, defs), e->size);
+    case ir::ExprKind::Select:
+      return ir::select(subst_inline(e->a, defs), subst_inline(e->b, defs),
+                        subst_inline(e->args.empty() ? nullptr : e->args[0], defs));
     case ir::ExprKind::Call: {
       std::vector<ir::ExprPtr> args;
       for (const auto &x : e->args) args.push_back(subst_inline(x, defs));
