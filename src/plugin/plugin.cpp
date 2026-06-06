@@ -10,6 +10,8 @@
 #include <funcs.hpp>
 #include <name.hpp>
 
+#include <cctype>
+#include <set>
 #include <string>
 
 #include "ir/ir.h"
@@ -39,6 +41,57 @@ qstring decompile_text(func_t *pfn) {
   return qstring(c.c_str());
 }
 
+// Wrap a span in an IDA color tag: SCOLOR_ON <tag> text SCOLOR_OFF <tag>.
+std::string col(char tag, const std::string &s) {
+  return std::string(1, '\x01') + tag + s + '\x02' + tag;
+}
+
+// Syntax-highlight one pseudocode line with IDA color tags.
+std::string colorize(const std::string &line) {
+  static const std::set<std::string> kw = {
+      "int", "void", "char", "short", "unsigned", "long", "return", "if", "else",
+      "while", "do", "for", "break", "continue", "switch", "case", "default", "goto"};
+  const char KEYWORD = '\x20', NUMBER = '\x0C', CMT = '\x04', CNAME = '\x25',
+             LOCAL = '\x19', DNAME = '\x07';
+  std::string out;
+  size_t i = 0, n = line.size();
+  while (i < n) {
+    char c = line[i];
+    if (c == '/' && i + 1 < n && line[i + 1] == '/') {  // comment to end of line
+      out += col(CMT, line.substr(i));
+      break;
+    }
+    if (std::isalpha((unsigned char)c) || c == '_') {   // identifier / keyword
+      size_t j = i;
+      while (j < n && (std::isalnum((unsigned char)line[j]) || line[j] == '_')) ++j;
+      std::string id = line.substr(i, j - i);
+      bool is_call = j < n && line[j] == '(';
+      bool is_local = (id.size() >= 2 && (id[0] == 'a' || id[0] == 'v') &&
+                       std::isdigit((unsigned char)id[1])) ||
+                      id.rfind("var_", 0) == 0 || id == "cond";
+      char tag = kw.count(id) ? KEYWORD : is_call ? CNAME : is_local ? LOCAL : DNAME;
+      out += col(tag, id);
+      i = j;
+      continue;
+    }
+    if (std::isdigit((unsigned char)c)) {               // number (dec or 0x..)
+      size_t j = i;
+      if (c == '0' && i + 1 < n && (line[i + 1] == 'x' || line[i + 1] == 'X')) {
+        j = i + 2;
+        while (j < n && std::isxdigit((unsigned char)line[j])) ++j;
+      } else {
+        while (j < n && std::isdigit((unsigned char)line[j])) ++j;
+      }
+      out += col(NUMBER, line.substr(i, j - i));
+      i = j;
+      continue;
+    }
+    out += c;
+    ++i;
+  }
+  return out;
+}
+
 // Show a function's pseudocode: always to the Output window, plus a custom
 // viewer window when running under the GUI.
 void show_pseudocode(func_t *pfn) {
@@ -53,7 +106,8 @@ void show_pseudocode(func_t *pfn) {
   std::string s = text.c_str();
   for (size_t start = 0;;) {
     size_t nl = s.find('\n', start);
-    lines->push_back(simpleline_t(s.substr(start, nl == std::string::npos ? nl : nl - start).c_str()));
+    std::string ln = s.substr(start, nl == std::string::npos ? nl : nl - start);
+    lines->push_back(simpleline_t(colorize(ln).c_str()));
     if (nl == std::string::npos) break;
     start = nl + 1;
   }
