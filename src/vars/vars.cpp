@@ -13,6 +13,7 @@ constexpr int kArgFirst = 2;  // r2
 constexpr int kArgLast = 7;   // r7
 
 bool is_arg_reg(int r) { return r >= kArgFirst && r <= kArgLast; }
+bool is_gp_reg(int r) { return r >= 0 && r <= 15; }
 
 void collect_regs(const ir::ExprPtr &e, std::vector<int> &out) {
   if (!e) return;
@@ -43,9 +44,9 @@ VarMap analyze(const ir::Function &fn) {
   std::set<int> input_set;
   std::set<int> used;
 
-  for (const auto &s : fn.stmts) {
+  auto note_reads = [&](const ir::ExprPtr &e) {
     std::vector<int> reads;
-    collect_regs(s.expr, reads);
+    collect_regs(e, reads);
     for (int r : reads) {
       used.insert(r);
       if (!written.count(r) && is_arg_reg(r) && !input_set.count(r)) {
@@ -53,10 +54,20 @@ VarMap analyze(const ir::Function &fn) {
         inputs.push_back(r);
       }
     }
-    if (s.kind == ir::StmtKind::Assign) {
-      used.insert(s.dst_reg);
-      written.insert(s.dst_reg);
+  };
+
+  // Address-ordered linear scan (approximates read-before-write across the CFG;
+  // precise liveness comes with a later milestone).
+  for (const auto &b : fn.blocks) {
+    for (const auto &s : b.stmts) {
+      note_reads(s.expr);
+      if (s.kind == ir::StmtKind::Assign) {
+        used.insert(s.dst_reg);
+        written.insert(s.dst_reg);
+      }
     }
+    note_reads(b.term.cond);
+    note_reads(b.term.value);
   }
 
   // Parameters: argument-register inputs, ordered by register number (r2 first).
@@ -68,7 +79,7 @@ VarMap analyze(const ir::Function &fn) {
   // Locals: remaining used GP registers (not params, not sp/lr), numbered v1..
   int local_n = 0;
   for (int r : used) {  // std::set => ascending, deterministic
-    if (vm.name.count(r)) continue;
+    if (vm.name.count(r) || !is_gp_reg(r)) continue;  // skip params, C, control regs
     if (r == ir::kRegSP) { vm.name[r] = "sp"; continue; }
     if (r == ir::kRegLR) { vm.name[r] = "lr"; continue; }
     vm.name[r] = "v" + std::to_string(++local_n);
