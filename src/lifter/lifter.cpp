@@ -24,10 +24,10 @@ namespace mcore {
 
 namespace {
 
-ir::Stmt lift_unknown(ea_t ea, int itype = -1) {
+ir::Stmt lift_unknown(ea_t ea) {
   qstring line;
   generate_disasm_line(&line, ea, GENDSM_REMOVE_TAGS);
-  if (itype >= 0) line.cat_sprnt("   [itype=%d]", itype);
+  line.trim2();  // collapse padding so the __asm text is tidy
   return ir::unknown((uint32_t)ea, line.c_str());
 }
 
@@ -216,6 +216,40 @@ void lift_insn(const insn_t &insn, ir::Block &blk) {
       blk.stmts.push_back(ir::assign(d, ir::select(ir::reg(ir::kRegC),
           ir::binop(ir::BinOp::Sub, ir::reg(d), ir::constant(1)), ir::reg(d)), ea)); break;
 
+    case mcore_andn:  // d = d & ~s
+      blk.stmts.push_back(ir::assign(d, ir::binop(ir::BinOp::And, ir::reg(d),
+          ir::unop(ir::UnOp::Not, ir::reg(s))), ea)); break;
+    case mcore_not:   // d = ~d
+      blk.stmts.push_back(ir::assign(d, ir::unop(ir::UnOp::Not, ir::reg(d)), ea)); break;
+    case mcore_abs:   // d = d < 0 ? -d : d
+      blk.stmts.push_back(ir::assign(d, ir::select(
+          ir::binop(ir::BinOp::CmpLt, ir::reg(d), ir::constant(0)),
+          ir::unop(ir::UnOp::Neg, ir::reg(d)), ir::reg(d)), ea)); break;
+    case mcore_rotli: {  // rotate left by imm: (d << n) | (d >> (32 - n))
+      int nn = (int)(imm & 31);
+      ir::ExprPtr e = nn == 0 ? ir::reg(d)
+          : ir::binop(ir::BinOp::Or, ir::binop(ir::BinOp::Shl, ir::reg(d), ir::constant(nn)),
+                                     ir::binop(ir::BinOp::Shr, ir::reg(d), ir::constant(32 - nn)));
+      blk.stmts.push_back(ir::assign(d, e, ea)); break;
+    }
+    case mcore_ff1:   // find-first-one -> intrinsic
+      blk.stmts.push_back(ir::assign(d, ir::call("__ff1", {ir::reg(d)}), ea)); break;
+    case mcore_brev:  // bit reverse -> intrinsic
+      blk.stmts.push_back(ir::assign(d, ir::call("__brev", {ir::reg(d)}), ea)); break;
+    case mcore_declt:  // d = d - 1 ; C = (d < 0)
+      blk.stmts.push_back(ir::assign(d, ir::binop(ir::BinOp::Sub, ir::reg(d), ir::constant(1)), ea));
+      blk.stmts.push_back(ir::assign(ir::kRegC, ir::binop(ir::BinOp::CmpLt, ir::reg(d), ir::constant(0)), ea));
+      break;
+    case mcore_decgt:  // d = d - 1 ; C = (d > 0)  (0 < d)
+      blk.stmts.push_back(ir::assign(d, ir::binop(ir::BinOp::Sub, ir::reg(d), ir::constant(1)), ea));
+      blk.stmts.push_back(ir::assign(ir::kRegC, ir::binop(ir::BinOp::CmpLt, ir::constant(0), ir::reg(d)), ea));
+      break;
+    // Extract byte N of d into r1.
+    case mcore_xtrb0: blk.stmts.push_back(ir::assign(1, ir::binop(ir::BinOp::And, ir::reg(d), ir::constant(0xFF)), ea)); break;
+    case mcore_xtrb1: blk.stmts.push_back(ir::assign(1, ir::binop(ir::BinOp::And, ir::binop(ir::BinOp::Shr, ir::reg(d), ir::constant(8)), ir::constant(0xFF)), ea)); break;
+    case mcore_xtrb2: blk.stmts.push_back(ir::assign(1, ir::binop(ir::BinOp::And, ir::binop(ir::BinOp::Shr, ir::reg(d), ir::constant(16)), ir::constant(0xFF)), ea)); break;
+    case mcore_xtrb3: blk.stmts.push_back(ir::assign(1, ir::binop(ir::BinOp::And, ir::binop(ir::BinOp::Shr, ir::reg(d), ir::constant(24)), ir::constant(0xFF)), ea)); break;
+
     // Memory: ops[0] = value/dest reg, ops[1] = (base, offset).
     case mcore_ld:   load_to(4); break;
     case mcore_ld_h: load_to(2); break;
@@ -237,7 +271,7 @@ void lift_insn(const insn_t &insn, ir::Block &blk) {
           ir::assign(ir::kRegRet, ir::call_indirect(ir::reg(insn.ops[0].reg), call_args()), ea));
       break;
 
-    default: blk.stmts.push_back(lift_unknown((ea_t)ea, insn.itype)); break;
+    default: blk.stmts.push_back(lift_unknown((ea_t)ea)); break;
   }
 }
 
@@ -278,13 +312,20 @@ bool lift_terminator(const insn_t &insn, ir::Block &blk, ea_t fallthrough) {
       return true;
     }
     case mcore_jmp:
+      t.kind = ir::TermKind::Return;
       if (insn.ops[0].reg == ir::kRegLR) {  // jmp r15 == rts
-        t.kind = ir::TermKind::Return;
         t.value = ir::reg(ir::kRegRet);
-        t.has_value = true;
-        return true;
+      } else {  // jmp rX: indirect tail call/return
+        std::set<int> defined;
+        for (const auto &st : blk.stmts)
+          if (st.kind == ir::StmtKind::Assign && st.dst_reg >= 2 && st.dst_reg <= 7)
+            defined.insert(st.dst_reg);
+        std::vector<ir::ExprPtr> args;
+        for (int r = 2; r <= 7 && defined.count(r); ++r) args.push_back(ir::reg(r));
+        t.value = ir::call_indirect(ir::reg(insn.ops[0].reg), std::move(args));
       }
-      return false;  // indirect jmp: handled later (B5+)
+      t.has_value = true;
+      return true;
     default:
       return false;
   }

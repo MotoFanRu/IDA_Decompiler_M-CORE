@@ -265,6 +265,18 @@ TEST("C condition survives the compared register being overwritten") {
   CHECK(contains(c, "!= 0"));      // a real non-null check remains
 }
 
+TEST("bitwise-not and and-not render") {
+  vars::VarMap vm;
+  CHECK(emit::emit_expr(*ir::unop(ir::UnOp::Not, ir::reg(2)), vm) == "~r2");
+  auto andn = ir::binop(ir::BinOp::And, ir::reg(2), ir::unop(ir::UnOp::Not, ir::reg(3)));
+  CHECK(emit::emit_expr(*andn, vm) == "r2 & ~r3");
+}
+
+TEST("un-lifted instruction renders as inline asm") {
+  ir::Function fn = one_block({ir::unknown(0, "addc    r3, r13")}, ir::reg(2));
+  CHECK(contains(decompile(std::move(fn)), "__asm { addc    r3, r13 }"));
+}
+
 TEST("cast renders and folds") {
   vars::VarMap vm;
   CHECK(emit::emit_expr(*ir::cast(1, false, ir::reg(2)), vm) == "(unsigned char)r2");

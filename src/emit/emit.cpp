@@ -148,8 +148,8 @@ std::string stmt_str(const ir::Stmt &s, const vars::VarMap &vm) {
                 (s.addr ? render(*s.addr, vm, 0) : "") + ")";
       return lhs + " = " + (s.expr ? render(*s.expr, vm, 0) : "?") + ";";
     }
-    case ir::StmtKind::Unknown:
-      return "// " + s.text;
+    case ir::StmtKind::Unknown:  // un-lifted (carry math, control regs, system) -> inline asm
+      return "__asm { " + s.text + " }";
   }
   return "";
 }
