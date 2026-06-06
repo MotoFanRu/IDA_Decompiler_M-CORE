@@ -269,6 +269,38 @@ TEST("call argument set in a predecessor block is recovered") {
   CHECK(contains(c, "g(v"));    // g is called with the recovered local
 }
 
+TEST("argument set on all incoming paths is recovered at a merge") {
+  // B0: if (a1) ; B1: r2 = 10 ; B2: r2 = 20 ; B3: foo()
+  // r2 is set up on both arms, so the merged call is foo(r2); but an arg set on
+  // only one arm must NOT be recovered (handled by the intersection).
+  ir::Function fn;
+  fn.name = "f";
+  fn.entry = 0;
+  ir::Block b0;
+  b0.entry = 0;
+  b0.term = cbr_t(ir::binop(ir::BinOp::CmpNe, ir::reg(4), ir::constant(0)), 1, 2);
+  ir::Block b1;
+  b1.entry = 1;
+  b1.stmts.push_back(ir::assign(2, ir::constant(10)));
+  b1.stmts.push_back(ir::assign(3, ir::constant(99)));  // r3 only on this arm
+  b1.term = goto_t(3);
+  ir::Block b2;
+  b2.entry = 2;
+  b2.stmts.push_back(ir::assign(2, ir::constant(20)));
+  b2.term = goto_t(3);
+  ir::Block b3;
+  b3.entry = 3;
+  b3.stmts.push_back(ir::assign(2, ir::call("foo", {})));
+  b3.term = ret_t(ir::reg(2));
+  fn.blocks.push_back(std::move(b0));
+  fn.blocks.push_back(std::move(b1));
+  fn.blocks.push_back(std::move(b2));
+  fn.blocks.push_back(std::move(b3));
+  std::string c = decompile(std::move(fn));
+  CHECK(!contains(c, "foo()"));   // r2 reached the call from both arms -> an arg
+  CHECK(!contains(c, "99"));      // r3 (one arm only) is not passed (and dead)
+}
+
 TEST("call result threaded as the next call's argument is recovered") {
   // r2 = alloc() ; *(r9) = r2 ; r3 = 0 ; r4 = 8 ; memset()   (memset's result dead)
   // The alloc result is read (stored) before memset, so it is live and passed:

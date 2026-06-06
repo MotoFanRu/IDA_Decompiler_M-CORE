@@ -142,50 +142,64 @@ void collect_arg_reads(const ir::ExprPtr &e, std::array<bool, 8> &rd) {
   }
 }
 
-// Argument registers (r2..r7) that were set up for the call at (blk, stmt_i):
-// those assigned since the most recent preceding call along the unique
-// (single-predecessor) path. A call clobbers the caller-saved arg registers, so
-// it acts as a barrier. The barrier call's own result (r2) is claimed only if it
-// was read between the call and here (i.e. the value is live and threaded on,
-// as in `p = alloc(); ...; memset(p, ..)`) — not if it was overwritten unread
-// (as in two independent sequential calls). `target_reg` is the callee-pointer
-// register of an indirect call (excluded), else -1.
+// Argument registers (r2..r7) available at a point, scanning backward. A call
+// clobbers the caller-saved arg registers, so it acts as a barrier; its own
+// result is claimed only if read since (live and threaded on, as in
+// `p = alloc(); ...; memset(p, ..)`). At a control-flow merge the analysis
+// recurses into every predecessor and intersects — a register counts only if it
+// is provided on all incoming paths. `read_seen` (by value) tracks registers
+// read on the continuation; `target_reg` (the callee pointer of an indirect
+// call) is excluded. `budget` bounds total work across branching paths.
+std::array<bool, 8> avail_args(const ir::Function &fn,
+                               const std::vector<std::vector<int>> &preds, int blk,
+                               int from_init, bool first_block,
+                               std::array<bool, 8> read_seen, int target_reg,
+                               std::set<int> visited, int &budget) {
+  std::array<bool, 8> defined{};
+  if (budget <= 0 || visited.count(blk)) return defined;
+  --budget;
+  visited.insert(blk);
+  const auto &b = fn.blocks[blk];
+  int from = first_block ? from_init : (int)b.stmts.size() - 1;
+  for (int i = from; i >= 0; --i) {
+    const ir::Stmt &s = b.stmts[i];
+    if (s.kind == ir::StmtKind::Assign && is_call_expr(s.expr)) {
+      if (s.dst_reg >= 2 && s.dst_reg <= 7 && s.dst_reg != target_reg &&
+          read_seen[s.dst_reg])
+        defined[s.dst_reg] = true;
+      return defined;  // barrier: caller-saved regs before it are clobbered
+    }
+    if (s.kind == ir::StmtKind::Assign && s.dst_reg >= 2 && s.dst_reg <= 7 &&
+        s.dst_reg != target_reg)
+      defined[s.dst_reg] = true;
+    collect_arg_reads(s.expr, read_seen);
+    collect_arg_reads(s.addr, read_seen);
+  }
+  // Reached the top of the block with no barrier: pull in from predecessors.
+  const auto &ps = preds[blk];
+  std::array<bool, 8> from_preds{};
+  if (ps.size() == 1) {
+    from_preds = avail_args(fn, preds, ps[0], 0, false, read_seen, target_reg, visited, budget);
+  } else if (ps.size() > 1) {
+    bool firstp = true;
+    for (int p : ps) {
+      auto pr = avail_args(fn, preds, p, 0, false, read_seen, target_reg, visited, budget);
+      if (firstp) { from_preds = pr; firstp = false; }
+      else for (int r = 2; r <= 7; ++r) from_preds[r] = from_preds[r] && pr[r];  // must hold on all paths
+    }
+  }
+  for (int r = 2; r <= 7; ++r) defined[r] = defined[r] || from_preds[r];
+  return defined;
+}
+
+// Arguments of the call at (blk, stmt_i): the contiguous r2.. run of registers
+// available just before it.
 std::vector<ir::ExprPtr> args_for_call(const ir::Function &fn,
                                        const std::vector<std::vector<int>> &preds,
                                        int blk, int stmt_i, int target_reg) {
-  std::array<bool, 8> defined{};   // defined[r] for r in 2..7
-  std::array<bool, 8> read_seen{}; // r read since the call site (scanning back)
-  int cur = blk;
-  bool first = true;
-  std::set<int> visited;
-  while (!visited.count(cur)) {
-    visited.insert(cur);
-    const auto &b = fn.blocks[cur];
-    // In the call's own block scan strictly before it (stmt_i-1..0, possibly
-    // empty); in predecessor blocks scan the whole block from the end.
-    int from = first ? stmt_i - 1 : (int)b.stmts.size() - 1;
-    first = false;
-    bool barrier = false;
-    for (int i = from; i >= 0; --i) {
-      const ir::Stmt &s = b.stmts[i];
-      if (s.kind == ir::StmtKind::Assign && is_call_expr(s.expr)) {
-        // Previous call: clobbers caller-saved regs. Claim its result only if
-        // that result has been read since (live), then stop.
-        if (s.dst_reg >= 2 && s.dst_reg <= 7 && s.dst_reg != target_reg &&
-            read_seen[s.dst_reg])
-          defined[s.dst_reg] = true;
-        barrier = true;
-        break;
-      }
-      if (s.kind == ir::StmtKind::Assign && s.dst_reg >= 2 && s.dst_reg <= 7 &&
-          s.dst_reg != target_reg)
-        defined[s.dst_reg] = true;
-      collect_arg_reads(s.expr, read_seen);
-      collect_arg_reads(s.addr, read_seen);
-    }
-    if (barrier || preds[cur].size() != 1) break;
-    cur = preds[cur][0];  // follow the single dominating predecessor
-  }
+  int budget = 400;
+  std::array<bool, 8> defined =
+      avail_args(fn, preds, blk, stmt_i - 1, true, {}, target_reg, {}, budget);
   std::vector<ir::ExprPtr> args;
   for (int r = 2; r <= 7 && defined[r]; ++r) args.push_back(ir::reg(r));
   return args;
