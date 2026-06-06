@@ -70,26 +70,62 @@ void show_pseudocode(func_t *pfn) {
     delete lines;  // no GUI (headless): nothing holds the buffer
 }
 
+const char *const kActionName = "mcore:decompile";
+
+// Only our target processor; on supported processors (ARM, x86, ...) we must NOT
+// touch F5 so the real Hex-Rays decompiler keeps it.
+bool is_mcore() { return inf_get_procname() == "M*CORE"; }
+
+// Bind F5 to our action only on M*CORE (taking it from the Hex-Rays "dummy"
+// warning action shown for unsupported processors); release it otherwise.
+void update_f5_binding() {
+  if (is_mcore()) {
+    update_action_shortcut("dummy_hexrays:warn", "");  // free F5 from the dummy
+    update_action_shortcut(kActionName, "F5");
+  } else {
+    update_action_shortcut(kActionName, "");           // leave F5 to the real decompiler
+  }
+}
+
 struct decompile_ah_t : public action_handler_t {
   int idaapi activate(action_activation_ctx_t *) override {
+    if (!is_mcore()) return 0;
     func_t *pfn = get_func(get_screen_ea());
     if (pfn == nullptr) { warning("M-CORE: no function under the cursor."); return 0; }
     show_pseudocode(pfn);
     return 1;
   }
-  action_state_t idaapi update(action_update_ctx_t *) override { return AST_ENABLE_ALWAYS; }
+  action_state_t idaapi update(action_update_ctx_t *) override {
+    return is_mcore() ? AST_ENABLE : AST_DISABLE;
+  }
 };
 decompile_ah_t g_decompile_ah;
-const char *const kActionName = "mcore:decompile";
+
+// Re-evaluate the F5 binding whenever a database finishes loading / the UI is ready
+// (the processor is known by then).
+struct ui_claim_t : public event_listener_t {
+  ssize_t idaapi on_event(ssize_t code, va_list) override {
+    if (code == ui_database_inited || code == ui_ready_to_run) update_f5_binding();
+    return 0;
+  }
+};
+ui_claim_t g_ui_claim;
 
 struct mcore_plugmod_t : public plugmod_t {
   mcore_plugmod_t() {
+    // Register without a default shortcut so registration never conflicts; F5 is
+    // bound dynamically by update_f5_binding() only on M*CORE databases.
     register_action(ACTION_DESC_LITERAL(kActionName, "Decompile (M-CORE)",
-                                        &g_decompile_ah, "F5",
+                                        &g_decompile_ah, nullptr,
                                         "Decompile the current M-CORE function", -1));
-    msg("[mcore-decompiler] loaded (press F5 in a function)\n");
+    hook_event_listener(HT_UI, &g_ui_claim);
+    update_f5_binding();
+    msg("[mcore-decompiler] loaded%s\n", is_mcore() ? " (press F5 in a function)" : "");
   }
-  ~mcore_plugmod_t() override { unregister_action(kActionName); }
+  ~mcore_plugmod_t() override {
+    unhook_event_listener(HT_UI, &g_ui_claim);
+    unregister_action(kActionName);
+  }
 
   bool idaapi run(size_t arg) override {
     // arg == SIZE_MAX: every function, with markers (eval/test harness).
