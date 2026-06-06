@@ -446,6 +446,9 @@ void inline_locals(ir::Function &fn) {
     auto &stmts = fn.blocks[i].stmts;
     for (auto it = stmts.rbegin(); it != stmts.rend(); ++it) {
       ir::Stmt &s = *it;
+      if (s.kind == ir::StmtKind::Assign && s.expr &&
+          s.expr->kind == ir::ExprKind::Reg && s.expr->reg == s.dst_reg)
+        continue;                              // identity copy 'x = x'
       if (s.kind == ir::StmtKind::Assign && s.dst_reg != ir::kRegC &&
           live.find(s.dst_reg) == live.end()) {
         if (!has_call(s.expr)) continue;       // dead store: drop

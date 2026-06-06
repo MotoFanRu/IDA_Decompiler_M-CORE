@@ -34,6 +34,7 @@ qstring decompile_text(func_t *pfn) {
   // Recover the stack frame first (sp slots -> locals, drop prologue/epilogue),
   // then recover variables (before the optimizer rewrites/removes assignments).
   opt::recover_stack(fn);
+  opt::split_ranges(fn);  // separate distinct values sharing a register
   vars::VarMap vm = vars::analyze(fn);
   opt::simplify(fn);
   opt::inline_locals(fn);

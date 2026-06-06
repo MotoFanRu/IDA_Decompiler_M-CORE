@@ -17,6 +17,7 @@ bool contains(const std::string &hay, const std::string &needle) {
 
 std::string decompile(ir::Function fn) {
   opt::recover_stack(fn);
+  opt::split_ranges(fn);
   vars::VarMap vm = vars::analyze(fn);
   opt::simplify(fn);
   opt::inline_locals(fn);
@@ -213,6 +214,31 @@ TEST("dead call result renders as a void-style statement") {
   std::string c = decompile(std::move(fn));
   CHECK(contains(c, "foo();"));      // dead result -> bare call
   CHECK(!contains(c, "= foo("));     // no assignment of the dead result
+}
+
+TEST("compared call result is kept when its register is reused (live-range split)") {
+  // r3 = a1 ; r2 = f() ; C = (r2 != 0) ; r2 = r3 (restore) ; if (C) body
+  // The call result must be kept and drive the condition, not be lost/confused.
+  ir::Function fn; fn.name = "g"; fn.entry = 0;
+  ir::Block b0; b0.entry = 0;
+  b0.stmts.push_back(ir::assign(3, ir::reg(2)));
+  b0.stmts.push_back(ir::assign(2, ir::call("f", {})));
+  b0.stmts.push_back(ir::assign(ir::kRegC, ir::binop(ir::BinOp::CmpNe, ir::reg(2), ir::constant(0))));
+  b0.stmts.push_back(ir::assign(2, ir::reg(3)));
+  b0.term = cbr_t(ir::reg(ir::kRegC), /*taken=*/2, /*fth=*/4);
+  fn.blocks.push_back(std::move(b0));
+  ir::Block b1; b1.entry = 2;
+  b1.stmts.push_back(ir::assign(2, ir::constant(7)));
+  b1.term = fall_t(4);
+  fn.blocks.push_back(std::move(b1));
+  ir::Block b2; b2.entry = 4;
+  b2.term = ret_t(ir::reg(2));
+  fn.blocks.push_back(std::move(b2));
+
+  std::string c = decompile(std::move(fn));
+  CHECK(contains(c, "= f();"));    // call result kept (not discarded as a void call)
+  CHECK(contains(c, "!= 0"));      // a real non-null check on that result
+  CHECK(!contains(c, "0 != 0"));
 }
 
 TEST("C condition survives the compared register being overwritten") {

@@ -97,9 +97,10 @@ VarMap analyze(const ir::Function &fn) {
       continue;
     }
     if (r == ir::kRegC) { vm.name[r] = "cond"; continue; }  // unresolved C bit
-    if (!is_gp_reg(r)) continue;  // skip other control regs
     if (r == ir::kRegSP) { vm.name[r] = "sp"; continue; }
     if (r == ir::kRegLR) { vm.name[r] = "lr"; continue; }
+    // GP registers and split live-range temporaries become locals v1..
+    if (!is_gp_reg(r) && !(r >= ir::kRenameBase && r < ir::kStackBase)) continue;
     vm.name[r] = "v" + std::to_string(++local_n);
   }
 

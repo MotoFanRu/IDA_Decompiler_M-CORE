@@ -12,6 +12,12 @@ namespace opt {
 // restore, stm/ldm register save/restore). Run before simplify().
 void recover_stack(ir::Function &fn);
 
+// Split intra-block register live ranges: when a register holds several distinct
+// values in a block (reassigned with the old value still used), give each value
+// its own variable. Fixes value confusion (e.g. a compared call result reused
+// before the branch) and improves naming. Run after recover_stack, before vars.
+void split_ranges(ir::Function &fn);
+
 // Simplify `fn` in place.
 void simplify(ir::Function &fn);
 

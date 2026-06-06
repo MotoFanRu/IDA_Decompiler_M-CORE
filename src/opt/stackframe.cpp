@@ -4,6 +4,7 @@
 
 #include "ir/ir.h"
 
+#include <map>
 #include <vector>
 
 namespace opt {
@@ -96,6 +97,68 @@ void recover_stack(ir::Function &fn) {
     // Rewrite terminator operands too (e.g. a return value loaded from the frame).
     b.term.cond = rw(b.term.cond);
     b.term.value = rw(b.term.value);
+  }
+}
+
+namespace {
+
+// Replace each register read with its current versioned id.
+ir::ExprPtr rename_reads(const ir::ExprPtr &e, const std::map<int, int> &ver) {
+  if (!e) return e;
+  switch (e->kind) {
+    case ir::ExprKind::Reg: {
+      auto it = ver.find(e->reg);
+      return it != ver.end() ? ir::reg(it->second) : e;
+    }
+    case ir::ExprKind::UnOp: return ir::unop(e->unop, rename_reads(e->a, ver));
+    case ir::ExprKind::Cast: return ir::cast(e->size, e->is_signed, rename_reads(e->a, ver));
+    case ir::ExprKind::Load: return ir::load(rename_reads(e->a, ver), e->size);
+    case ir::ExprKind::BinOp:
+      return ir::binop(e->binop, rename_reads(e->a, ver), rename_reads(e->b, ver));
+    case ir::ExprKind::Select:
+      return ir::select(rename_reads(e->a, ver), rename_reads(e->b, ver),
+                        rename_reads(e->args.empty() ? nullptr : e->args[0], ver));
+    case ir::ExprKind::Call: {
+      std::vector<ir::ExprPtr> args;
+      for (const auto &x : e->args) args.push_back(rename_reads(x, ver));
+      return e->a ? ir::call_indirect(rename_reads(e->a, ver), std::move(args))
+                  : ir::call(e->name, std::move(args));
+    }
+    default: return e;
+  }
+}
+
+bool is_gp(int r) { return r >= 0 && r <= 15; }
+
+} // namespace
+
+void split_ranges(ir::Function &fn) {
+  int ctr = 0;
+  for (auto &b : fn.blocks) {
+    // Index of each GP register's last definition in the block.
+    std::map<int, int> last_def;
+    for (size_t i = 0; i < b.stmts.size(); ++i)
+      if (b.stmts[i].kind == ir::StmtKind::Assign && is_gp(b.stmts[i].dst_reg))
+        last_def[b.stmts[i].dst_reg] = (int)i;
+
+    std::map<int, int> ver;  // GP reg -> current versioned id (absent = original)
+    for (size_t i = 0; i < b.stmts.size(); ++i) {
+      ir::Stmt &s = b.stmts[i];
+      s.addr = rename_reads(s.addr, ver);
+      s.expr = rename_reads(s.expr, ver);
+      if (s.kind == ir::StmtKind::Unknown) { ver.clear(); continue; }
+      if (s.kind != ir::StmtKind::Assign) continue;
+      int d = s.dst_reg;
+      if (is_gp(d) && last_def[d] != (int)i) {
+        int t = ir::kRenameBase + ctr++;  // earlier value -> its own variable
+        ver[d] = t;
+        s.dst_reg = t;
+      } else {
+        ver.erase(d);  // last def of d (or non-GP): keep the original id
+      }
+    }
+    b.term.cond = rename_reads(b.term.cond, ver);
+    b.term.value = rename_reads(b.term.value, ver);
   }
 }
 

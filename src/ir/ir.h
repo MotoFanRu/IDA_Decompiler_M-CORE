@@ -20,8 +20,9 @@ inline constexpr int kRegSP = 0;    // r0
 inline constexpr int kRegRet = 2;   // r2 holds the return value (ABI)
 inline constexpr int kRegLR = 15;   // r15 link register
 inline constexpr int kRegC = 100;   // synthetic 1-bit condition (PSR C bit)
-inline constexpr int kStackBase = 0x40000;  // stack slots: kStackBase + byte offset
-inline constexpr int kRegDiscard = -1;      // Assign dst: evaluate expr only (void call)
+inline constexpr int kRenameBase = 0x10000;  // split live-ranges: fresh local versions
+inline constexpr int kStackBase = 0x40000;   // stack slots: kStackBase + byte offset
+inline constexpr int kRegDiscard = -1;       // Assign dst: evaluate expr only (void call)
 
 enum class ExprKind { Const, Reg, BinOp, UnOp, Load, Call, Cast, Select };
 
