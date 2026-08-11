@@ -1,32 +1,24 @@
 # Third-party notices
 
-## M·CORE processor module for IDA Pro
+## IDA Pro and IDA SDK
 
-This project builds **on top of** a third-party IDA Pro processor (disassembler)
-module for the Motorola M·CORE architecture. It is **not** redistributed inside
-this repository — it is referenced as a git submodule and fetched from its
-upstream:
+This plugin targets IDA Pro 9.4 and its built-in Motorola MCORE processor
+module. IDA Pro is proprietary Hex-Rays software and is not redistributed by
+this repository.
 
-- Submodule path: `third_party/mcore-proc`
-- Upstream: https://github.com/MotoFanRu/M-CORE_IDA-Pro
+Builds use the official [HexRaysSA/ida-sdk](https://github.com/HexRaysSA/ida-sdk)
+at tag `v9.4.0-release`. The SDK is obtained separately and remains under the
+license published in that repository; no SDK files are copied into this tree.
 
-How this repository uses it:
+## Historical M·CORE processor module
 
-- At **build time**, the lifter includes the module's enumeration headers
-  (`ins.hpp`, `mcore.hpp`) to map IDA's decoded `insn_t.itype` / register numbers
-  to symbolic `mcore_*` names. No module source is copied into this tree.
-- At **run time**, the *installed* M·CORE processor module (already present in
-  your IDA `procs/` directory) performs the disassembly; this plugin only reads
-  the resulting `insn_t` structures.
+Earlier revisions used the community
+[M-CORE_IDA-Pro](https://github.com/MotoFanRu/M-CORE_IDA-Pro) processor module
+for instruction identifiers and disassembly. The current code has no required
+build-time or runtime dependency on that module and does not include its headers
+or sources. It accepts the legacy `M*CORE` processor name only so existing IDA
+databases remain usable when their original module is installed separately.
 
-Attribution, as stated by the upstream project and the original source headers:
-
-- Original "IDA MCORE Plugin", Copyright (c) 2004–2005 `rshade@hushmail.com`.
-- Ported and maintained for modern IDA Pro (8.3 / 9.0) by
-  [@usernameak](https://github.com/usernameak) and the MotoFan.Ru developers
-  (erithion, yakk, GanjaFuzz, Chik_v, theCore, and others).
-
-The upstream module does not ship an explicit open-source license file. It is
-used here under its own (upstream) terms; this repository claims no rights over
-it. If you are the rights holder and want the attribution or usage adjusted,
-please open an issue.
+Historical attribution: the original “IDA MCORE Plugin” was written by
+`rshade@hushmail.com` (2004–2005) and later ported to modern IDA by
+[@usernameak](https://github.com/usernameak) and MotoFan.Ru contributors.

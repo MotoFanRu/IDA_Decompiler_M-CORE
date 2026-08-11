@@ -1,4 +1,4 @@
-# Headless helper: turn a flat M*CORE fixture into code+function(s) and run the
+# Headless helper: turn a flat MCORE fixture into code+function(s) and run the
 # decompiler plugin. Pseudocode is printed to the IDA message log between
 # >>>MCORE_FUNC / <<<MCORE_END markers (see run_integration.sh).
 #

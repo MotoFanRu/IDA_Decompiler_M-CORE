@@ -1,6 +1,6 @@
-// M-CORE decompiler plugin for IDA Pro 9 (self-contained; Path B).
+// M-CORE decompiler plugin for IDA Pro 9.4 (self-contained; Path B).
 //
-// Runs on a database analysed by the M*CORE processor module. The pipeline is:
+// Runs on a database analysed by IDA's built-in MCORE processor. The pipeline is:
 // insn_t -> IR (lifter) -> simplify (opt) -> C text (emit). Hex-Rays is not used
 // (no decompiler backend loads for an unsupported processor).
 #include <ida.hpp>
@@ -130,11 +130,15 @@ void show_pseudocode(func_t *pfn) {
 
 const char *const kActionName = "mcore:decompile";
 
-// Only our target processor; on supported processors (ARM, x86, ...) we must NOT
-// touch F5 so the real Hex-Rays decompiler keeps it.
-bool is_mcore() { return inf_get_procname() == "M*CORE"; }
+// IDA 9.4's built-in processor is the primary target. Accept the legacy name
+// too so existing databases remain usable; mnemonic-based lifting makes their
+// different private instruction numbers irrelevant. On all other processors
+// we must not touch F5 so Hex-Rays keeps its shortcut.
+bool is_mcore() {
+  return PH.id == PLFM_MCORE || inf_get_procname() == "M*CORE";
+}
 
-// Bind F5 to our action only on M*CORE (taking it from the Hex-Rays "dummy"
+// Bind F5 to our action only on MCORE (taking it from the Hex-Rays "dummy"
 // warning action shown for unsupported processors); release it otherwise.
 void update_f5_binding() {
   if (is_mcore()) {
@@ -172,7 +176,7 @@ ui_claim_t g_ui_claim;
 struct mcore_plugmod_t : public plugmod_t {
   mcore_plugmod_t() {
     // Register without a default shortcut so registration never conflicts; F5 is
-    // bound dynamically by update_f5_binding() only on M*CORE databases.
+    // bound dynamically by update_f5_binding() only on MCORE databases.
     register_action(ACTION_DESC_LITERAL(kActionName, "Decompile (M-CORE)",
                                         &g_decompile_ah, nullptr,
                                         "Decompile the current M-CORE function", -1));

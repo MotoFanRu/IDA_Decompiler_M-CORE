@@ -1,49 +1,57 @@
-cmake_minimum_required(VERSION 3.20)
+cmake_minimum_required(VERSION 3.25)
+
+# IDA 9.4 publishes its C++ SDK separately from the application install. Use
+# the official SDK's out-of-tree CMake entrypoint (tag v9.4.0-release).
+if(DEFINED IDASDK)
+  set(_idasdk_root "${IDASDK}")
+elseif(DEFINED ENV{IDASDK} AND NOT "$ENV{IDASDK}" STREQUAL "")
+  set(_idasdk_root "$ENV{IDASDK}")
+else()
+  message(FATAL_ERROR
+    "IDASDK is not set. Point it at the HexRaysSA/ida-sdk v9.4.0-release checkout.")
+endif()
+if(EXISTS "${_idasdk_root}/src/include/pro.h")
+  set(_idasdk_source_root "${_idasdk_root}/src")
+elseif(EXISTS "${_idasdk_root}/include/pro.h")
+  set(_idasdk_source_root "${_idasdk_root}")
+else()
+  message(FATAL_ERROR "include/pro.h not found below IDASDK=${_idasdk_root}")
+endif()
+set(IDASDK "${_idasdk_source_root}" CACHE PATH "IDA SDK source root" FORCE)
+set(ENV{IDASDK} "${_idasdk_source_root}")
+set(_idasdk_init "${_idasdk_source_root}/cmake/idasdk_init.cmake")
+include("${_idasdk_init}")
+
 project(mcore_decompiler CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
-include(IdaSdk)
+# Keep this out-of-tree plugin's output in its own build directory rather than
+# the SDK checkout's bin/plugins directory.
+set(IDA_PLUGIN_DIR "${CMAKE_BINARY_DIR}")
+find_package(idasdk REQUIRED)
+if(NOT IDA_SDK_VERSION_NUM EQUAL 940)
+  message(FATAL_ERROR
+    "IDA SDK 9.4 is required (found ${idasdk_VERSION} at ${IDASDK})")
+endif()
 
 # ---------------------------------------------------------------------------
-# The IDA plugin (.so). Hex-Rays is reached through the kernel dispatcher
-# (get_hexdsp()), so only libida.so is linked.
+# The IDA plugin (.so), linked through the official SDK plugin target.
 # ---------------------------------------------------------------------------
-add_library(mcore_decompiler SHARED
-  src/plugin/plugin.cpp
-  src/lifter/lifter.cpp
-  src/vars/vars.cpp
-  src/opt/opt.cpp
-  src/opt/stackframe.cpp
-  src/emit/emit.cpp
+ida_add_plugin(mcore_decompiler
+  SOURCES
+    src/plugin/plugin.cpp
+    src/lifter/lifter.cpp
+    src/vars/vars.cpp
+    src/opt/opt.cpp
+    src/opt/stackframe.cpp
+    src/emit/emit.cpp
 )
 target_include_directories(mcore_decompiler PRIVATE
-  "${CMAKE_CURRENT_SOURCE_DIR}/src"
-  "${CMAKE_CURRENT_SOURCE_DIR}/third_party/mcore-proc")  # M*CORE ins.hpp / mcore.hpp
-ida_configure_plugin(mcore_decompiler)
-
-# ---------------------------------------------------------------------------
-# Reproducible Linux build of the vendored M*CORE processor module (disassembler).
-# The install already ships a working procs/mcore.so, so this is OFF by default;
-# enable with -DBUILD_MCORE_PROC=ON. Built as a separate .so; not auto-installed.
-# ---------------------------------------------------------------------------
-option(BUILD_MCORE_PROC "Build the vendored M*CORE processor module" OFF)
-set(MCORE_PROC_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/mcore-proc")
-if(BUILD_MCORE_PROC AND EXISTS "${MCORE_PROC_DIR}/reg.cpp")
-  add_library(mcore_proc MODULE
-    ${MCORE_PROC_DIR}/ana.cpp
-    ${MCORE_PROC_DIR}/emu.cpp
-    ${MCORE_PROC_DIR}/ins.cpp
-    ${MCORE_PROC_DIR}/out.cpp
-    ${MCORE_PROC_DIR}/reg.cpp
-  )
-  target_include_directories(mcore_proc PRIVATE "${MCORE_PROC_DIR}")
-  set_target_properties(mcore_proc PROPERTIES CXX_STANDARD 20)
-  ida_configure_processor_module(mcore_proc)
-endif()
+  "${CMAKE_CURRENT_SOURCE_DIR}/src")
+set_target_properties(mcore_decompiler PROPERTIES SKIP_BUILD_RPATH TRUE)
 
 # ---------------------------------------------------------------------------
 # Offline unit tests (no IDA dependency).

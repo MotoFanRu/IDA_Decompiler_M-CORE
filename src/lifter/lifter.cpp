@@ -14,15 +14,83 @@
 #include <algorithm>
 #include <map>
 #include <set>
+#include <string_view>
+#include <unordered_map>
 #include <vector>
-
-// Instruction- and register-id enums from the vendored M*CORE module.
-#include "ins.hpp"     // nameNum: mcore_movi, mcore_addu, mcore_bt, ...
-#include "mcore.hpp"   // mcore_registers
 
 namespace mcore {
 
 namespace {
+
+// Processor-module instruction numbers are private implementation details. In
+// particular, IDA 9.4's built-in MCORE module uses a different itype ordering
+// than the former third-party module. Resolve canonical SDK mnemonics to the
+// lifter's stable local identifiers instead.
+enum class McoreInsn {
+  Unknown,
+  Abs, Addc, Addi, Addu, And, Andi, Andn, Asr, Asri,
+  Bclri, Bf, Bgeni, Bgenr, Bmaski, Br, Brev, Bseti, Bsr, Bt, Btsti,
+  Clrf, Clrt, Cmphs, Cmplt, Cmplti, Cmpne, Cmpnei,
+  Decf, Decgt, Declt, Decne, Dect, Divs, Divu,
+  Ff1, Incf, Inct, Ixh, Ixw,
+  Jmp, Jmpi, Jsr, Jsri,
+  Ld, LdB, LdH, Ldq, Lrw, Lsl, Lsli, Lsr, Lsri,
+  Mov, Movf, Movi, Movt, Mult, Mvc, Mvcv,
+  Not, Or, Rotli, Rsub, Rsubi,
+  Sextb, Sexth, St, StB, StH, Stq,
+  Subc, Subi, Subu, Tst, Xor,
+  Xtrb0, Xtrb1, Xtrb2, Xtrb3, Zextb, Zexth,
+};
+
+McoreInsn classify(const insn_t &insn) {
+  static const std::unordered_map<std::string_view, McoreInsn> kinds = {
+      {"abs", McoreInsn::Abs},       {"addc", McoreInsn::Addc},
+      {"addi", McoreInsn::Addi},     {"addu", McoreInsn::Addu},
+      {"and", McoreInsn::And},       {"andi", McoreInsn::Andi},
+      {"andn", McoreInsn::Andn},     {"asr", McoreInsn::Asr},
+      {"asri", McoreInsn::Asri},     {"bclri", McoreInsn::Bclri},
+      {"bf", McoreInsn::Bf},         {"bgeni", McoreInsn::Bgeni},
+      {"bgenr", McoreInsn::Bgenr},   {"bmaski", McoreInsn::Bmaski},
+      {"br", McoreInsn::Br},         {"brev", McoreInsn::Brev},
+      {"bseti", McoreInsn::Bseti},   {"bsr", McoreInsn::Bsr},
+      {"bt", McoreInsn::Bt},         {"btsti", McoreInsn::Btsti},
+      {"clrf", McoreInsn::Clrf},     {"clrt", McoreInsn::Clrt},
+      {"cmphs", McoreInsn::Cmphs},   {"cmplt", McoreInsn::Cmplt},
+      {"cmplti", McoreInsn::Cmplti}, {"cmpne", McoreInsn::Cmpne},
+      {"cmpnei", McoreInsn::Cmpnei}, {"decf", McoreInsn::Decf},
+      {"decgt", McoreInsn::Decgt},   {"declt", McoreInsn::Declt},
+      {"decne", McoreInsn::Decne},   {"dect", McoreInsn::Dect},
+      {"divs", McoreInsn::Divs},     {"divu", McoreInsn::Divu},
+      {"ff1", McoreInsn::Ff1},       {"incf", McoreInsn::Incf},
+      {"inct", McoreInsn::Inct},     {"ixh", McoreInsn::Ixh},
+      {"ixw", McoreInsn::Ixw},       {"jmp", McoreInsn::Jmp},
+      {"jmpi", McoreInsn::Jmpi},     {"jsr", McoreInsn::Jsr},
+      {"jsri", McoreInsn::Jsri},     {"ld", McoreInsn::Ld},
+      {"ld.b", McoreInsn::LdB},      {"ld.h", McoreInsn::LdH},
+      {"ldq", McoreInsn::Ldq},       {"lrw", McoreInsn::Lrw},
+      {"lsl", McoreInsn::Lsl},       {"lsli", McoreInsn::Lsli},
+      {"lsr", McoreInsn::Lsr},       {"lsri", McoreInsn::Lsri},
+      {"mov", McoreInsn::Mov},       {"movf", McoreInsn::Movf},
+      {"movi", McoreInsn::Movi},     {"movt", McoreInsn::Movt},
+      {"mult", McoreInsn::Mult},     {"mvc", McoreInsn::Mvc},
+      {"mvcv", McoreInsn::Mvcv},     {"not", McoreInsn::Not},
+      {"or", McoreInsn::Or},         {"rotli", McoreInsn::Rotli},
+      {"rsub", McoreInsn::Rsub},     {"rsubi", McoreInsn::Rsubi},
+      {"sextb", McoreInsn::Sextb},   {"sexth", McoreInsn::Sexth},
+      {"st", McoreInsn::St},         {"st.b", McoreInsn::StB},
+      {"st.h", McoreInsn::StH},      {"stq", McoreInsn::Stq},
+      {"subc", McoreInsn::Subc},     {"subi", McoreInsn::Subi},
+      {"subu", McoreInsn::Subu},     {"tst", McoreInsn::Tst},
+      {"xor", McoreInsn::Xor},       {"xtrb0", McoreInsn::Xtrb0},
+      {"xtrb1", McoreInsn::Xtrb1},   {"xtrb2", McoreInsn::Xtrb2},
+      {"xtrb3", McoreInsn::Xtrb3},   {"zextb", McoreInsn::Zextb},
+      {"zexth", McoreInsn::Zexth},
+  };
+  const char *mnem = insn.get_canon_mnem(PH);
+  if (mnem == nullptr) return McoreInsn::Unknown;
+  auto it = kinds.find(std::string_view(mnem));
+  return it == kinds.end() ? McoreInsn::Unknown : it->second;
+}
 
 ir::Stmt lift_unknown(ea_t ea) {
   qstring line;
@@ -66,114 +134,109 @@ void lift_insn(const insn_t &insn, ir::Block &blk) {
     return args;
   };
 
-  switch (insn.itype) {
-    case mcore_movi: blk.stmts.push_back(ir::assign(d, ir::constant(imm), ea)); break;
-    case mcore_mov:  blk.stmts.push_back(ir::assign(d, ir::reg(s), ea)); break;
+  switch (classify(insn)) {
+    case McoreInsn::Movi: blk.stmts.push_back(ir::assign(d, ir::constant(imm), ea)); break;
+    case McoreInsn::Mov:  blk.stmts.push_back(ir::assign(d, ir::reg(s), ea)); break;
 
-    case mcore_addu: rr(ir::BinOp::Add); break;
-    case mcore_subu: rr(ir::BinOp::Sub); break;
-    case mcore_addc:  // d = d + s + C ; C = carry out  (C is the shared carry/condition bit)
+    case McoreInsn::Addu: rr(ir::BinOp::Add); break;
+    case McoreInsn::Subu: rr(ir::BinOp::Sub); break;
+    case McoreInsn::Addc:  // d = d + s + C ; C = carry out  (C is the shared carry/condition bit)
       blk.stmts.push_back(ir::assign(d,
           ir::binop(ir::BinOp::Add, ir::binop(ir::BinOp::Add, ir::reg(d), ir::reg(s)), ir::reg(ir::kRegC)), ea));
       blk.stmts.push_back(ir::assign(ir::kRegC, ir::call("__carry", {ir::reg(d), ir::reg(s)}), ea));
       break;
-    case mcore_subc:  // d = d - s - 1 + C ; C = not-borrow out
+    case McoreInsn::Subc:  // d = d - s - 1 + C ; C = not-borrow out
       blk.stmts.push_back(ir::assign(d,
           ir::binop(ir::BinOp::Add,
               ir::binop(ir::BinOp::Sub, ir::binop(ir::BinOp::Sub, ir::reg(d), ir::reg(s)), ir::constant(1)),
               ir::reg(ir::kRegC)), ea));
       blk.stmts.push_back(ir::assign(ir::kRegC, ir::call("__borrow", {ir::reg(d), ir::reg(s)}), ea));
       break;
-    case mcore_and:  rr(ir::BinOp::And); break;
-    case mcore_or:   rr(ir::BinOp::Or);  break;
-    case mcore_xor:  rr(ir::BinOp::Xor); break;
-    case mcore_rsub:
+    case McoreInsn::And: rr(ir::BinOp::And); break;
+    case McoreInsn::Or:  rr(ir::BinOp::Or);  break;
+    case McoreInsn::Xor: rr(ir::BinOp::Xor); break;
+    case McoreInsn::Rsub:
       blk.stmts.push_back(ir::assign(d, ir::binop(ir::BinOp::Sub, ir::reg(s), ir::reg(d)), ea));
       break;
 
-    case mcore_addi: ri(ir::BinOp::Add); break;
-    case mcore_subi: ri(ir::BinOp::Sub); break;
-    case mcore_lsli: ri(ir::BinOp::Shl); break;
-    case mcore_lsri: ri(ir::BinOp::Shr); break;
-    case mcore_asri: ri(ir::BinOp::Sar); break;
+    case McoreInsn::Addi: ri(ir::BinOp::Add); break;
+    case McoreInsn::Subi: ri(ir::BinOp::Sub); break;
+    case McoreInsn::Lsli: ri(ir::BinOp::Shl); break;
+    case McoreInsn::Lsri: ri(ir::BinOp::Shr); break;
+    case McoreInsn::Asri: ri(ir::BinOp::Sar); break;
 
     // Compares set the condition (C) bit.
-    case mcore_cmplt: setc(ir::BinOp::CmpLt, ir::reg(s)); break;
-    case mcore_cmphs: setc(ir::BinOp::CmpHs, ir::reg(s)); break;
-    case mcore_cmpne: setc(ir::BinOp::CmpNe, ir::reg(s)); break;
-    case mcore_cmplti: setc(ir::BinOp::CmpLt, ir::constant(imm)); break;
-    case mcore_cmpnei: setc(ir::BinOp::CmpNe, ir::constant(imm)); break;
+    case McoreInsn::Cmplt: setc(ir::BinOp::CmpLt, ir::reg(s)); break;
+    case McoreInsn::Cmphs: setc(ir::BinOp::CmpHs, ir::reg(s)); break;
+    case McoreInsn::Cmpne: setc(ir::BinOp::CmpNe, ir::reg(s)); break;
+    case McoreInsn::Cmplti: setc(ir::BinOp::CmpLt, ir::constant(imm)); break;
+    case McoreInsn::Cmpnei: setc(ir::BinOp::CmpNe, ir::constant(imm)); break;
 
-    case mcore_mult: rr(ir::BinOp::Mul); break;
-    case mcore_andi: ri(ir::BinOp::And); break;
-    case mcore_rsubi:  // d = imm - d
+    case McoreInsn::Mult: rr(ir::BinOp::Mul); break;
+    case McoreInsn::Andi: ri(ir::BinOp::And); break;
+    case McoreInsn::Rsubi:  // d = imm - d
       blk.stmts.push_back(ir::assign(d, ir::binop(ir::BinOp::Sub, ir::constant(imm), ir::reg(d)), ea));
       break;
-    case mcore_decne:  // d = d - 1 ; C = (d != 0)
+    case McoreInsn::Decne:  // d = d - 1 ; C = (d != 0)
       blk.stmts.push_back(ir::assign(d, ir::binop(ir::BinOp::Sub, ir::reg(d), ir::constant(1)), ea));
       blk.stmts.push_back(ir::assign(ir::kRegC, ir::binop(ir::BinOp::CmpNe, ir::reg(d), ir::constant(0)), ea));
       break;
 
-    // bgeni d = 1<<n ; bmaski d = (1<<n)-1 (n==0 means 32 -> all ones). For all
-    // variants the bit number is the 5-bit field [8:4] of the raw instruction
-    // word (binutils mcore-opc); the module splits it across variants and does
-    // not surface the full value, so read it from the bytes.
-    case mcore_bgeni:
-    case mcore_bgeni_0:
-    case mcore_bgeni_1: {
+    // bgeni d = 1<<n ; bmaski d = (1<<n)-1 (n==0 means 32 -> all ones).
+    // Read the 5-bit field directly so the result does not depend on how a
+    // processor module chooses to expose edge-case immediates.
+    case McoreInsn::Bgeni: {
       uint32_t w = ((uint32_t)get_byte((ea_t)ea) << 8) | get_byte((ea_t)ea + 1);
       int n = (w >> 4) & 0x1f;
       blk.stmts.push_back(ir::assign(d, ir::constant((int64_t)(uint32_t)(1u << n)), ea));
       break;
     }
-    case mcore_bmaski:
-    case mcore_bmaski_0:
-    case mcore_bmaski_1: {
+    case McoreInsn::Bmaski: {
       uint32_t w = ((uint32_t)get_byte((ea_t)ea) << 8) | get_byte((ea_t)ea + 1);
       int n = (w >> 4) & 0x1f;
       uint32_t mask = (n == 0) ? 0xFFFFFFFFu : ((1u << n) - 1);
       blk.stmts.push_back(ir::assign(d, ir::constant((int64_t)mask), ea));
       break;
     }
-    case mcore_ixw:  // d = d + s*4
+    case McoreInsn::Ixw:  // d = d + s*4
       blk.stmts.push_back(ir::assign(d, ir::binop(ir::BinOp::Add, ir::reg(d),
           ir::binop(ir::BinOp::Mul, ir::reg(s), ir::constant(4))), ea));
       break;
-    case mcore_ixh:  // d = d + s*2
+    case McoreInsn::Ixh:  // d = d + s*2
       blk.stmts.push_back(ir::assign(d, ir::binop(ir::BinOp::Add, ir::reg(d),
           ir::binop(ir::BinOp::Mul, ir::reg(s), ir::constant(2))), ea));
       break;
 
     // Bit operations (imm = bit number).
-    case mcore_bseti:  // d |= 1<<n
+    case McoreInsn::Bseti:  // d |= 1<<n
       blk.stmts.push_back(ir::assign(d, ir::binop(ir::BinOp::Or, ir::reg(d),
           ir::constant((int64_t)(1u << imm))), ea));
       break;
-    case mcore_bclri:  // d &= ~(1<<n)
+    case McoreInsn::Bclri:  // d &= ~(1<<n)
       blk.stmts.push_back(ir::assign(d, ir::binop(ir::BinOp::And, ir::reg(d),
           ir::constant((int64_t)(uint32_t)~(1u << imm))), ea));
       break;
-    case mcore_mvc:   // d = C
+    case McoreInsn::Mvc:   // d = C
       blk.stmts.push_back(ir::assign(d, ir::reg(ir::kRegC), ea));
       break;
-    case mcore_mvcv:  // d = !C
+    case McoreInsn::Mvcv:  // d = !C
       blk.stmts.push_back(ir::assign(d, ir::unop(ir::UnOp::LNot, ir::reg(ir::kRegC)), ea));
       break;
 
-    case mcore_btsti:  // C = (d >> n) & 1
+    case McoreInsn::Btsti:  // C = (d >> n) & 1
       blk.stmts.push_back(ir::assign(ir::kRegC, ir::binop(ir::BinOp::And,
           ir::binop(ir::BinOp::Shr, ir::reg(d), ir::constant(imm)), ir::constant(1)), ea));
       break;
 
     // Sign/zero extensions -> readable casts.
-    case mcore_zextb: blk.stmts.push_back(ir::assign(d, ir::cast(1, false, ir::reg(d)), ea)); break;
-    case mcore_sextb: blk.stmts.push_back(ir::assign(d, ir::cast(1, true,  ir::reg(d)), ea)); break;
-    case mcore_zexth: blk.stmts.push_back(ir::assign(d, ir::cast(2, false, ir::reg(d)), ea)); break;
-    case mcore_sexth: blk.stmts.push_back(ir::assign(d, ir::cast(2, true,  ir::reg(d)), ea)); break;
+    case McoreInsn::Zextb: blk.stmts.push_back(ir::assign(d, ir::cast(1, false, ir::reg(d)), ea)); break;
+    case McoreInsn::Sextb: blk.stmts.push_back(ir::assign(d, ir::cast(1, true,  ir::reg(d)), ea)); break;
+    case McoreInsn::Zexth: blk.stmts.push_back(ir::assign(d, ir::cast(2, false, ir::reg(d)), ea)); break;
+    case McoreInsn::Sexth: blk.stmts.push_back(ir::assign(d, ir::cast(2, true,  ir::reg(d)), ea)); break;
 
     // Load relative word: a 32-bit value (constant or resolved symbol) from the
     // literal pool. IDA puts the loaded value in ops[1].addr.
-    case mcore_lrw: {
+    case McoreInsn::Lrw: {
       int64_t v = (int64_t)insn.ops[1].addr;
       qstring nm;
       if (get_name(&nm, (ea_t)v) > 0 && !nm.empty())
@@ -183,7 +246,7 @@ void lift_insn(const insn_t &insn, ir::Block &blk) {
       break;
     }
     // Indirect call via the literal pool; IDA resolves the target in ops[0].addr.
-    case mcore_jsri: {
+    case McoreInsn::Jsri: {
       ea_t tgt = (ea_t)insn.ops[0].addr;
       qstring nm;
       if (get_name(&nm, tgt) <= 0 || nm.empty()) nm.sprnt("sub_%X", (unsigned)tgt);
@@ -191,93 +254,93 @@ void lift_insn(const insn_t &insn, ir::Block &blk) {
       break;
     }
 
-    case mcore_divs:  // M-CORE divides by the implicit divisor register r1
-    case mcore_divu:
+    case McoreInsn::Divs:  // M-CORE divides by the implicit divisor register r1
+    case McoreInsn::Divu:
       blk.stmts.push_back(ir::assign(d, ir::binop(ir::BinOp::Div, ir::reg(d), ir::reg(1)), ea));
       break;
-    case mcore_lsl:  rr(ir::BinOp::Shl); break;  // variable shifts
-    case mcore_lsr:  rr(ir::BinOp::Shr); break;
-    case mcore_asr:  rr(ir::BinOp::Sar); break;
-    case mcore_bgenr:  // d = 1 << s
+    case McoreInsn::Lsl:  rr(ir::BinOp::Shl); break;  // variable shifts
+    case McoreInsn::Lsr:  rr(ir::BinOp::Shr); break;
+    case McoreInsn::Asr:  rr(ir::BinOp::Sar); break;
+    case McoreInsn::Bgenr:  // d = 1 << s
       blk.stmts.push_back(ir::assign(d, ir::binop(ir::BinOp::Shl, ir::constant(1), ir::reg(s)), ea));
       break;
-    case mcore_tst:    // C = (d & s) != 0
+    case McoreInsn::Tst:    // C = (d & s) != 0
       blk.stmts.push_back(ir::assign(ir::kRegC,
           ir::binop(ir::BinOp::CmpNe, ir::binop(ir::BinOp::And, ir::reg(d), ir::reg(s)), ir::constant(0)), ea));
       break;
 
     // Conditional moves (read C): d = C ? then : else.
-    case mcore_movt:  // if C: d = s
+    case McoreInsn::Movt:  // if C: d = s
       blk.stmts.push_back(ir::assign(d, ir::select(ir::reg(ir::kRegC), ir::reg(s), ir::reg(d)), ea)); break;
-    case mcore_movf:  // if !C: d = s
+    case McoreInsn::Movf:  // if !C: d = s
       blk.stmts.push_back(ir::assign(d, ir::select(ir::reg(ir::kRegC), ir::reg(d), ir::reg(s)), ea)); break;
-    case mcore_clrt:  // if C: d = 0
+    case McoreInsn::Clrt:  // if C: d = 0
       blk.stmts.push_back(ir::assign(d, ir::select(ir::reg(ir::kRegC), ir::constant(0), ir::reg(d)), ea)); break;
-    case mcore_clrf:  // if !C: d = 0
+    case McoreInsn::Clrf:  // if !C: d = 0
       blk.stmts.push_back(ir::assign(d, ir::select(ir::reg(ir::kRegC), ir::reg(d), ir::constant(0)), ea)); break;
-    case mcore_inct:  // if C: d = d + 1
+    case McoreInsn::Inct:  // if C: d = d + 1
       blk.stmts.push_back(ir::assign(d, ir::select(ir::reg(ir::kRegC),
           ir::binop(ir::BinOp::Add, ir::reg(d), ir::constant(1)), ir::reg(d)), ea)); break;
-    case mcore_decf:  // if !C: d = d - 1
+    case McoreInsn::Decf:  // if !C: d = d - 1
       blk.stmts.push_back(ir::assign(d, ir::select(ir::reg(ir::kRegC), ir::reg(d),
           ir::binop(ir::BinOp::Sub, ir::reg(d), ir::constant(1))), ea)); break;
-    case mcore_incf:  // if !C: d = d + 1
+    case McoreInsn::Incf:  // if !C: d = d + 1
       blk.stmts.push_back(ir::assign(d, ir::select(ir::reg(ir::kRegC), ir::reg(d),
           ir::binop(ir::BinOp::Add, ir::reg(d), ir::constant(1))), ea)); break;
-    case mcore_dect:  // if C: d = d - 1
+    case McoreInsn::Dect:  // if C: d = d - 1
       blk.stmts.push_back(ir::assign(d, ir::select(ir::reg(ir::kRegC),
           ir::binop(ir::BinOp::Sub, ir::reg(d), ir::constant(1)), ir::reg(d)), ea)); break;
 
-    case mcore_andn:  // d = d & ~s
+    case McoreInsn::Andn:  // d = d & ~s
       blk.stmts.push_back(ir::assign(d, ir::binop(ir::BinOp::And, ir::reg(d),
           ir::unop(ir::UnOp::Not, ir::reg(s))), ea)); break;
-    case mcore_not:   // d = ~d
+    case McoreInsn::Not:  // d = ~d
       blk.stmts.push_back(ir::assign(d, ir::unop(ir::UnOp::Not, ir::reg(d)), ea)); break;
-    case mcore_abs:   // d = d < 0 ? -d : d
+    case McoreInsn::Abs:   // d = d < 0 ? -d : d
       blk.stmts.push_back(ir::assign(d, ir::select(
           ir::binop(ir::BinOp::CmpLt, ir::reg(d), ir::constant(0)),
           ir::unop(ir::UnOp::Neg, ir::reg(d)), ir::reg(d)), ea)); break;
-    case mcore_rotli: {  // rotate left by imm: (d << n) | (d >> (32 - n))
+    case McoreInsn::Rotli: {  // rotate left by imm: (d << n) | (d >> (32 - n))
       int nn = (int)(imm & 31);
       ir::ExprPtr e = nn == 0 ? ir::reg(d)
           : ir::binop(ir::BinOp::Or, ir::binop(ir::BinOp::Shl, ir::reg(d), ir::constant(nn)),
                                      ir::binop(ir::BinOp::Shr, ir::reg(d), ir::constant(32 - nn)));
       blk.stmts.push_back(ir::assign(d, e, ea)); break;
     }
-    case mcore_ff1:   // find-first-one -> intrinsic
+    case McoreInsn::Ff1:   // find-first-one -> intrinsic
       blk.stmts.push_back(ir::assign(d, ir::call("__ff1", {ir::reg(d)}), ea)); break;
-    case mcore_brev:  // bit reverse -> intrinsic
+    case McoreInsn::Brev:  // bit reverse -> intrinsic
       blk.stmts.push_back(ir::assign(d, ir::call("__brev", {ir::reg(d)}), ea)); break;
-    case mcore_declt:  // d = d - 1 ; C = (d < 0)
+    case McoreInsn::Declt:  // d = d - 1 ; C = (d < 0)
       blk.stmts.push_back(ir::assign(d, ir::binop(ir::BinOp::Sub, ir::reg(d), ir::constant(1)), ea));
       blk.stmts.push_back(ir::assign(ir::kRegC, ir::binop(ir::BinOp::CmpLt, ir::reg(d), ir::constant(0)), ea));
       break;
-    case mcore_decgt:  // d = d - 1 ; C = (d > 0)  (0 < d)
+    case McoreInsn::Decgt:  // d = d - 1 ; C = (d > 0)  (0 < d)
       blk.stmts.push_back(ir::assign(d, ir::binop(ir::BinOp::Sub, ir::reg(d), ir::constant(1)), ea));
       blk.stmts.push_back(ir::assign(ir::kRegC, ir::binop(ir::BinOp::CmpLt, ir::constant(0), ir::reg(d)), ea));
       break;
     // Extract byte N of d into r1.
-    case mcore_xtrb0: blk.stmts.push_back(ir::assign(1, ir::binop(ir::BinOp::And, ir::reg(d), ir::constant(0xFF)), ea)); break;
-    case mcore_xtrb1: blk.stmts.push_back(ir::assign(1, ir::binop(ir::BinOp::And, ir::binop(ir::BinOp::Shr, ir::reg(d), ir::constant(8)), ir::constant(0xFF)), ea)); break;
-    case mcore_xtrb2: blk.stmts.push_back(ir::assign(1, ir::binop(ir::BinOp::And, ir::binop(ir::BinOp::Shr, ir::reg(d), ir::constant(16)), ir::constant(0xFF)), ea)); break;
-    case mcore_xtrb3: blk.stmts.push_back(ir::assign(1, ir::binop(ir::BinOp::And, ir::binop(ir::BinOp::Shr, ir::reg(d), ir::constant(24)), ir::constant(0xFF)), ea)); break;
+    case McoreInsn::Xtrb0: blk.stmts.push_back(ir::assign(1, ir::binop(ir::BinOp::And, ir::reg(d), ir::constant(0xFF)), ea)); break;
+    case McoreInsn::Xtrb1: blk.stmts.push_back(ir::assign(1, ir::binop(ir::BinOp::And, ir::binop(ir::BinOp::Shr, ir::reg(d), ir::constant(8)), ir::constant(0xFF)), ea)); break;
+    case McoreInsn::Xtrb2: blk.stmts.push_back(ir::assign(1, ir::binop(ir::BinOp::And, ir::binop(ir::BinOp::Shr, ir::reg(d), ir::constant(16)), ir::constant(0xFF)), ea)); break;
+    case McoreInsn::Xtrb3: blk.stmts.push_back(ir::assign(1, ir::binop(ir::BinOp::And, ir::binop(ir::BinOp::Shr, ir::reg(d), ir::constant(24)), ir::constant(0xFF)), ea)); break;
 
     // Memory: ops[0] = value/dest reg, ops[1] = (base, offset).
-    case mcore_ld:   load_to(4); break;
-    case mcore_ld_h: load_to(2); break;
-    case mcore_ld_b: load_to(1); break;
-    case mcore_st:   store_from(4); break;
-    case mcore_st_h: store_from(2); break;
-    case mcore_st_b: store_from(1); break;
+    case McoreInsn::Ld:   load_to(4); break;
+    case McoreInsn::LdH: load_to(2); break;
+    case McoreInsn::LdB: load_to(1); break;
+    case McoreInsn::St:   store_from(4); break;
+    case McoreInsn::StH: store_from(2); break;
+    case McoreInsn::StB: store_from(1); break;
 
     // Load/store quad: transfer r4..r7 to/from [base], [base+4], [base+8], [base+12].
-    case mcore_ldq:
+    case McoreInsn::Ldq:
       for (int k = 0; k < 4; ++k) {
         ir::ExprPtr addr = k ? ir::binop(ir::BinOp::Add, ir::reg(d), ir::constant(k * 4)) : ir::reg(d);
         blk.stmts.push_back(ir::assign(4 + k, ir::load(addr, 4), ea));
       }
       break;
-    case mcore_stq:
+    case McoreInsn::Stq:
       for (int k = 0; k < 4; ++k) {
         ir::ExprPtr addr = k ? ir::binop(ir::BinOp::Add, ir::reg(d), ir::constant(k * 4)) : ir::reg(d);
         blk.stmts.push_back(ir::store(addr, ir::reg(4 + k), 4, ea));
@@ -285,14 +348,14 @@ void lift_insn(const insn_t &insn, ir::Block &blk) {
       break;
 
     // Calls: result in r2 (ABI).
-    case mcore_bsr: {
+    case McoreInsn::Bsr: {
       ea_t tgt = (ea_t)insn.ops[0].addr;
       qstring nm;
       if (get_name(&nm, tgt) <= 0 || nm.empty()) nm.sprnt("sub_%X", (unsigned)tgt);
       blk.stmts.push_back(ir::assign(ir::kRegRet, ir::call(nm.c_str(), call_args()), ea));
       break;
     }
-    case mcore_jsr:
+    case McoreInsn::Jsr:
       blk.stmts.push_back(
           ir::assign(ir::kRegRet, ir::call_indirect(ir::reg(insn.ops[0].reg), call_args()), ea));
       break;
@@ -305,24 +368,24 @@ void lift_insn(const insn_t &insn, ir::Block &blk) {
 bool lift_terminator(const insn_t &insn, ir::Block &blk, ea_t fallthrough) {
   ir::Terminator &t = blk.term;
   t.ea = (uint32_t)insn.ea;
-  switch (insn.itype) {
-    case mcore_bt:
+  switch (classify(insn)) {
+    case McoreInsn::Bt:
       t.kind = ir::TermKind::CondBranch;
       t.cond = ir::reg(ir::kRegC);
       t.target = (uint32_t)insn.ops[0].addr;
       t.fallthrough = (uint32_t)fallthrough;
       return true;
-    case mcore_bf:
+    case McoreInsn::Bf:
       t.kind = ir::TermKind::CondBranch;
       t.cond = ir::unop(ir::UnOp::LNot, ir::reg(ir::kRegC));
       t.target = (uint32_t)insn.ops[0].addr;
       t.fallthrough = (uint32_t)fallthrough;
       return true;
-    case mcore_br:
+    case McoreInsn::Br:
       t.kind = ir::TermKind::Goto;
       t.target = (uint32_t)insn.ops[0].addr;
       return true;
-    case mcore_jmpi: {  // tail jump through the literal pool: a tail call
+    case McoreInsn::Jmpi: {  // tail jump through the literal pool: a tail call
       ea_t tgt = (ea_t)insn.ops[1].addr;
       qstring nm;
       if (get_name(&nm, tgt) <= 0 || nm.empty()) nm.sprnt("sub_%X", (unsigned)tgt);
@@ -337,7 +400,7 @@ bool lift_terminator(const insn_t &insn, ir::Block &blk, ea_t fallthrough) {
       t.has_value = true;
       return true;
     }
-    case mcore_jmp:
+    case McoreInsn::Jmp:
       t.kind = ir::TermKind::Return;
       if (insn.ops[0].reg == ir::kRegLR) {  // jmp r15 == rts
         t.value = ir::reg(ir::kRegRet);

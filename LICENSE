@@ -22,8 +22,7 @@ SOFTWARE.
 
 ----------------------------------------------------------------------------
 
-This license covers the original source in this repository (src/, tests/,
-cmake/, and the build files). It does NOT cover the third-party M·CORE
-processor module referenced as the git submodule under third_party/mcore-proc,
-which is maintained separately and distributed under its own terms. See
+This license covers the original source and build files in this repository. It
+does NOT cover IDA Pro, its built-in processor modules, or the separately
+downloaded IDA SDK, which remain under their respective terms. See
 THIRD_PARTY-NOTICES.md.

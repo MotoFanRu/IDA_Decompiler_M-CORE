@@ -15,7 +15,7 @@ C equivalent (M-CORE ABI returns in r2):
 int f(void) { return 42; }
 ```
 
-Load with the custom processor module: `idat -A -p'M*CORE' prog.bin`
+Load with IDA Pro 9.4's built-in processor: `idat -A -pMCORE prog.bin`
 (disassembly oracle for crafting/validating fixtures).
 
 **Expected decompiler output (goal of M1):** `return 42;`

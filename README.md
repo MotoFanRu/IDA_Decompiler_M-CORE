@@ -1,15 +1,15 @@
 # mcore_decompiler
 
 A self-contained **decompiler for Motorola M·CORE** binaries, packaged as an
-IDA Pro 9 plugin. It lifts the disassembly produced by the M·CORE processor
-module into its own intermediate representation, optimises and structures it,
+IDA Pro 9.4 plugin. It lifts the disassembly produced by IDA's built-in MCORE
+processor into its own intermediate representation, optimises and structures it,
 and emits **readable C pseudocode** with recovered local variables and
 arguments — bound to **F5** inside any M·CORE database.
 
 > Hex-Rays does not provide a decompiler back end for M·CORE, so there is no
 > microcode target to plug into. This project takes the other route ("Path B"):
 > a small, independent decompilation pipeline (IR + optimiser + control-flow
-> structuring + C emitter), with no dependency on the Hex-Rays SDK.
+> structuring + C emitter), with no dependency on Hex-Rays decompiler APIs.
 
 ```c
 int BAP_AnyStateExit(int a1, int a2)
@@ -34,8 +34,8 @@ arguments, structured `if`s, and struct-field accesses.</sub>
 ## Why
 
 M·CORE is a 16-bit fixed-width, big-endian RISC ISA Motorola used in embedded
-systems and feature-phone firmware (e.g. the Motorola E1000). IDA Pro can
-disassemble it with a community processor module, but cannot decompile it. This
+systems and feature-phone firmware (e.g. the Motorola E1000). IDA Pro 9.4 can
+disassemble it with its built-in processor module, but cannot decompile it. This
 plugin fills that gap with output aimed at **readability** rather than at being
 a drop-in Hex-Rays equivalent.
 
@@ -63,27 +63,25 @@ a drop-in Hex-Rays equivalent.
 
 ## Requirements
 
-- **IDA Pro 9.0** (64-bit, Linux) with the SDK headers and `libida.so`.
-- The **M·CORE processor module** installed in IDA (`procs/`), so the database
-  disassembles. See [THIRD_PARTY-NOTICES.md](THIRD_PARTY-NOTICES.md) — it is a
-  third-party module referenced here as a git submodule and is **not**
-  redistributed in this repository.
-- A C++17 compiler and CMake ≥ 3.20.
+- **IDA Pro 9.4** (64-bit, Linux), including its built-in `procs/mcore.so`.
+- The official [IDA SDK](https://github.com/HexRaysSA/ida-sdk) checkout at tag
+  `v9.4.0-release`.
+- A C++17 compiler and CMake ≥ 3.25.
 
-The pipeline core (lifter/opt/vars/emit) is pure C++ with no IDA dependency and
-is unit-tested offline; only the plugin shell and the lifter's enum headers
-touch the SDK.
+The IR, optimization, variable-analysis, and emission stages are pure C++ and
+unit-tested offline; only the plugin shell and instruction lifter touch the SDK.
 
 ## Building
 
 ```sh
-# 1. Clone with the processor-module submodule (needed for the enum headers)
-git clone --recurse-submodules <your-fork-url> mcore_decompiler
+# 1. Clone this project and the matching official SDK
+git clone <your-fork-url> mcore_decompiler
+git clone --depth 1 --branch v9.4.0-release \
+  https://github.com/HexRaysSA/ida-sdk.git /path/to/ida-sdk
 cd mcore_decompiler
-#   (or, if already cloned: git submodule update --init)
 
-# 2. Point the build at your IDA install (ships the SDK headers + libida.so)
-export IDA_DIR=/path/to/ida-pro-9.0      # or pass -DIDA_DIR=... to cmake
+# 2. Point the build at the SDK checkout
+export IDASDK=/path/to/ida-sdk
 
 # 3. Configure and build
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
@@ -91,7 +89,7 @@ cmake --build build -j"$(nproc)"
 # -> build/mcore_decompiler.so
 ```
 
-`cmake/IdaSdk.cmake` resolves the SDK from `IDA_DIR` (env var or `-DIDA_DIR`).
+`IDASDK` may point either at the git checkout root or its `src/` directory.
 
 ### Installing
 
@@ -99,20 +97,19 @@ cmake --build build -j"$(nproc)"
 cp build/mcore_decompiler.so ~/.idapro/plugins/
 ```
 
-### Optional: building the processor module from source
-
-The plugin only needs the installed `procs/mcore*.so` at run time. If you want a
-reproducible Linux build of the vendored module too, configure with
-`-DBUILD_MCORE_PROC=ON` (produces a separate `.so`; not auto-installed).
-
 ## Usage
 
-1. Open an M·CORE database in IDA 9 (the M·CORE processor module must be
-   active — the title bar shows `M*CORE`).
+1. Open an M·CORE database in IDA 9.4 with the built-in processor active; the
+   processor name is `MCORE` (without an asterisk).
 2. Put the cursor in a function and press **F5** (or run the
    `Decompile (M-CORE)` action).
 3. The pseudocode is printed to the **Output** window and shown in a custom
    viewer.
+
+Databases created with the former third-party processor are stored as `M*CORE`
+and cannot switch processor modules in place. This plugin keeps compatibility
+with those databases when that processor is already installed, but all new
+databases and integration tests use IDA 9.4's built-in `MCORE` module.
 
 ## How it works
 
@@ -135,16 +132,17 @@ language. See [docs/design.md](docs/design.md) for the design notes (in Russian)
 
 ## Tests
 
-Offline unit tests cover the lifter, optimiser, variable recovery and emitter
-end-to-end (no IDA needed); integration fixtures run the installed plugin
-headlessly over hand-assembled M·CORE programs and diff against expected C.
+Offline unit tests cover the IR pipeline, optimiser, variable recovery and
+emitter (no IDA runtime needed); integration fixtures run the plugin with IDA
+9.4's built-in MCORE module and diff the output against expected C.
 
 ```sh
-# unit tests only (no IDA required)
+# unit tests (configuration still uses the official SDK)
 cmake -S . -B build && cmake --build build -j"$(nproc)"
 ./build/unit_tests
 
-# everything (unit + headless integration; needs IDA_DIR with idat)
+# everything (unit + headless integration)
+export IDA_DIR=/path/to/ida-pro-9.4
 ./run_tests.sh
 ```
 
@@ -165,13 +163,13 @@ or complete one. Known limits:
 
 ## Acknowledgements
 
-Disassembly is provided by the third-party **M·CORE processor module for IDA
-Pro** (https://github.com/MotoFanRu/M-CORE_IDA-Pro) — original work by
-`rshade@hushmail.com` (2004–2005), ported to modern IDA by
-[@usernameak](https://github.com/usernameak) and the MotoFan.Ru developers. See
-[THIRD_PARTY-NOTICES.md](THIRD_PARTY-NOTICES.md).
+Disassembly is provided by IDA Pro 9.4's built-in MCORE processor. Earlier
+versions of this project used the community
+[M-CORE_IDA-Pro](https://github.com/MotoFanRu/M-CORE_IDA-Pro) module; thanks to
+its original and modern maintainers for enabling the initial implementation.
 
 ## License
 
-[MIT](LICENSE) for the code in this repository. The vendored M·CORE processor
-module is referenced as a submodule and remains under its own (upstream) terms.
+[MIT](LICENSE) for the code in this repository. IDA Pro and its processor
+modules remain proprietary Hex-Rays software; the separately downloaded IDA SDK
+is distributed under its own license.

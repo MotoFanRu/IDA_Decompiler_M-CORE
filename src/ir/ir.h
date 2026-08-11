@@ -15,7 +15,7 @@
 
 namespace ir {
 
-// M-CORE register numbers match the module's mcore_registers enum (r0..r15 == 0..15).
+// IDA's built-in MCORE module numbers the architectural registers r0..r15 as 0..15.
 inline constexpr int kRegSP = 0;    // r0
 inline constexpr int kRegRet = 2;   // r2 holds the return value (ABI)
 inline constexpr int kRegLR = 15;   // r15 link register
