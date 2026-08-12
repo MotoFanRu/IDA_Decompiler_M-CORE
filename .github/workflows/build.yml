@@ -81,13 +81,17 @@ jobs:
         shell: bash
         run: |
           mkdir -p release
-          find build -type f -name "mcore_decompiler*" -exec cp {} release/ \;
+          find build -type f \( \
+            -name "mcore_decompiler.dll" -o \
+            -name "mcore_decompiler.so"  -o \
+            -name "mcore_decompiler.dylib" \
+          \) -exec cp {} release/ \;
 
 
       - name: Upload - (${{ matrix.name }})
         uses: actions/upload-artifact@v7
         with:
-          name: mcore_decompiler_${{ matrix.os }}-${{ matrix.compiler }}
+          name: ${{ matrix.os }}-${{ matrix.compiler }}
           path: release/
 
   package:
