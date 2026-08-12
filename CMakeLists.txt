@@ -1,8 +1,17 @@
 cmake_minimum_required(VERSION 3.25)
 
+project(mcore_decompiler CXX)
+
 # IDA 9.4 publishes its C++ SDK separately from the application install. Use
 # the official SDK's out-of-tree CMake entrypoint (tag v9.4.0-release).
-if(DEFINED IDASDK)
+
+# Define the fallback local path
+set(_local_idasdk "${CMAKE_CURRENT_SOURCE_DIR}/ida-sdk")
+
+# Check if the validation file exists inside the local directory
+if(EXISTS "${_local_idasdk}/README.md")
+  set(_idasdk_root "${_local_idasdk}")
+elseif(DEFINED IDASDK)
   set(_idasdk_root "${IDASDK}")
 elseif(DEFINED ENV{IDASDK} AND NOT "$ENV{IDASDK}" STREQUAL "")
   set(_idasdk_root "$ENV{IDASDK}")
@@ -10,6 +19,7 @@ else()
   message(FATAL_ERROR
     "IDASDK is not set. Point it at the HexRaysSA/ida-sdk v9.4.0-release checkout.")
 endif()
+
 if(EXISTS "${_idasdk_root}/src/include/pro.h")
   set(_idasdk_source_root "${_idasdk_root}/src")
 elseif(EXISTS "${_idasdk_root}/include/pro.h")
@@ -21,8 +31,6 @@ set(IDASDK "${_idasdk_source_root}" CACHE PATH "IDA SDK source root" FORCE)
 set(ENV{IDASDK} "${_idasdk_source_root}")
 set(_idasdk_init "${_idasdk_source_root}/cmake/idasdk_init.cmake")
 include("${_idasdk_init}")
-
-project(mcore_decompiler CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

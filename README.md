@@ -75,18 +75,16 @@ unit-tested offline; only the plugin shell and instruction lifter touch the SDK.
 
 ```sh
 # 1. Clone this project and the matching official SDK
-git clone <your-fork-url> mcore_decompiler
-git clone --depth 1 --branch v9.4.0-release \
-  https://github.com/HexRaysSA/ida-sdk.git /path/to/ida-sdk
-cd mcore_decompiler
+git clone --depth=1 --recurse-submodules --shallow-submodules https://github.com/Siesta/MCORE-Decompiler
+cd MCORE-Decompiler
 
-# 2. Point the build at the SDK checkout
-export IDASDK=/path/to/ida-sdk
-
-# 3. Configure and build
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+# 2. Configure and build
+cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j"$(nproc)"
+
+# -> build/mcore_decompiler.dll
 # -> build/mcore_decompiler.so
+# -> build/mcore_decompiler.dylib
 ```
 
 `IDASDK` may point either at the git checkout root or its `src/` directory.
@@ -94,7 +92,9 @@ cmake --build build -j"$(nproc)"
 ### Installing
 
 ```sh
+cp build/mcore_decompiler.dll IDA_Pro_ROOT/plugins/
 cp build/mcore_decompiler.so ~/.idapro/plugins/
+cp build/mcore_decompiler.dylib ~/.idapro/plugins/
 ```
 
 ## Usage
