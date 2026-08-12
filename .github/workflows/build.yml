@@ -50,31 +50,31 @@ jobs:
         if: matrix.compiler == 'msvc'
         shell: pwsh
         run: >
-          cmake -B build -DCMAKE_BUILD_TYPE=Release
+          cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_VERBOSE_MAKEFILE=ON
           -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT\scripts\buildsystems\vcpkg.cmake"
 
       - name: Configure - (${{ matrix.name }})
         if: matrix.compiler == 'gcc'
         shell: bash
-        run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+        run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_VERBOSE_MAKEFILE=ON
 
       - name: Configure - (${{ matrix.name }})
         if: matrix.compiler == 'clang'
         shell: zsh {0}
-        run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+        run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_VERBOSE_MAKEFILE=ON
 
 
       - name: Build - (${{ matrix.name }})
         if: matrix.compiler == 'msvc'
-        run: cmake --build build --config Release
+        run: cmake --build build --config Release --verbose
 
       - name: Build - (${{ matrix.name }})
         if: matrix.compiler == 'gcc'
-        run: cmake --build build --config Release
+        run: cmake --build build --config Release --verbose
 
       - name: Build - (${{ matrix.name }})
         if: matrix.compiler == 'clang'
-        run: cmake --build build --config Release
+        run: cmake --build build --config Release --verbose
 
 
       - name: Release - (${{ matrix.name }})
@@ -87,5 +87,29 @@ jobs:
       - name: Upload - (${{ matrix.name }})
         uses: actions/upload-artifact@v7
         with:
-          name: MOTOLAB-${{ matrix.os }}-${{ matrix.compiler }}
+          name: mcore_decompiler_${{ matrix.os }}-${{ matrix.compiler }}
+          path: release/
+
+  package:
+    name: Package - (All Artifacts)
+    needs: build-desktop
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download - (All Artifacts)
+        uses: actions/download-artifact@v7
+        with:
+          path: artifacts
+
+      - name: Combine - (All Artifacts)
+        run: |
+          mkdir -p release
+          # optional: keep platform subfolders so files don't clash
+          cp -r artifacts/* release/
+          # or flatten if you prefer:
+          # find artifacts -type f -exec cp {} release/ \;
+
+      - name: Upload (All Artifacts)
+        uses: actions/upload-artifact@v7
+        with:
+          name: mcore_decompiler_all
           path: release/
