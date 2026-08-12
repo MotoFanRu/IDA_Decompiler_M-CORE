@@ -2,7 +2,7 @@
 
 A self-contained decompiler for [Motorola M·CORE](https://en.wikipedia.org/wiki/M%C2%B7CORE) architecture, packaged as an IDA Pro 9.4+ plugin. It lifts the disassembly produced by IDA's built-in M-CORE processor into its own intermediate representation, optimizes and structures it, and emits **readable C pseudocode** with recovered local variables and arguments. The decompiler is bound to the <kbd>F5</kbd> key inside any M-CORE (old and new) databases.
 
-// IMG
+![M·CORE Decompiler Plugin for IDA Pro 9.4+](img/IDA_Pro_94_M-CORE.png)
 
 Hex-Rays does not provide a decompiler backend for M-CORE, so there is no microcode target to plug into. This project takes an alternative route: a small, independent decompilation pipeline (IR + optimizer + control-flow + structuring + C emitter) with no dependency on Hex-Rays decompiler APIs. Arguments, structured `if` statements, and struct-field accesses can still be recovered.
 
@@ -15,7 +15,8 @@ You can find ready-to-install libraries on the GitHub Actions page:
 ## Build
 
 ```sh
-git clone --depth=1 --recurse-submodules --shallow-submodules https://github.com/MotoFanRu/IDA_Decompiler_M-CORE
+git clone https://github.com/MotoFanRu/IDA_Decompiler_M-CORE --depth=1 -b master
+git submodule update --init --recursive --depth=1
 
 cd IDA_Decompiler_M-CORE
 
