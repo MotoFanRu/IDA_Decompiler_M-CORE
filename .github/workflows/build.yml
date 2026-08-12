@@ -1,0 +1,91 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ "master" ]
+  pull_request:
+    branches: [ "master" ]
+
+jobs:
+  build-desktop:
+    name: Build - (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false # Do not kill running jobs if one failed.
+      matrix:
+        include:
+          - os: windows-latest
+            compiler: msvc
+            name: Windows, VCPKG, MSVC
+          - os: ubuntu-latest
+            compiler: gcc
+            name: Linux, Ubuntu, GCC
+          - os: macos-latest
+            compiler: clang
+            name: macOS, Brew, Clang
+
+    steps:
+      - name: Checkout - (recursive with submodules)
+        uses: actions/checkout@v7
+        with:
+          submodules: 'recursive'
+          fetch-depth: 1 # --depth=1
+
+
+      - name: Dependencies - (${{ matrix.name }})
+        if: matrix.compiler == 'msvc'
+        run: vcpkg install sdl2:x64-windows
+
+      - name: Dependencies - (${{ matrix.name }})
+        if: runner.os == 'Linux'
+        run: sudo apt update && sudo apt install -y cmake ninja-build
+
+      - name: Dependencies - (${{ matrix.name }})
+        if: runner.os == 'macOS'
+        run: |
+          brew untap aws/tap || true
+          brew install cmake ninja
+
+      - name: Configure - (${{ matrix.name }})
+        if: matrix.compiler == 'msvc'
+        shell: pwsh
+        run: >
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT\scripts\buildsystems\vcpkg.cmake"
+
+      - name: Configure - (${{ matrix.name }})
+        if: matrix.compiler == 'gcc'
+        shell: bash
+        run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+
+      - name: Configure - (${{ matrix.name }})
+        if: matrix.compiler == 'clang'
+        shell: zsh {0}
+        run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+
+
+      - name: Build - (${{ matrix.name }})
+        if: matrix.compiler == 'msvc'
+        run: cmake --build build --config Release
+
+      - name: Build - (${{ matrix.name }})
+        if: matrix.compiler == 'gcc'
+        run: cmake --build build --config Release
+
+      - name: Build - (${{ matrix.name }})
+        if: matrix.compiler == 'clang'
+        run: cmake --build build --config Release
+
+
+      - name: Release - (${{ matrix.name }})
+        shell: bash
+        run: |
+          mkdir -p release
+          find build -type f -name "mcore_decompiler*" -exec cp {} release/ \;
+
+
+      - name: Upload - (${{ matrix.name }})
+        uses: actions/upload-artifact@v7
+        with:
+          name: MOTOLAB-${{ matrix.os }}-${{ matrix.compiler }}
+          path: release/
