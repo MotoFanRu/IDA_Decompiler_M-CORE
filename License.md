@@ -1,6 +1,6 @@
-MIT License
+The MIT License (MIT)
 
-Copyright (c) 2026 the mcore_decompiler authors
+Copyright (c) 2003-2026 MotoFan Developers
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -19,10 +19,3 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-
-----------------------------------------------------------------------------
-
-This license covers the original source and build files in this repository. It
-does NOT cover IDA Pro, its built-in processor modules, or the separately
-downloaded IDA SDK, which remain under their respective terms. See
-THIRD_PARTY-NOTICES.md.

@@ -75,8 +75,9 @@ unit-tested offline; only the plugin shell and instruction lifter touch the SDK.
 
 ```sh
 # 1. Clone this project and the matching official SDK
-git clone --depth=1 --recurse-submodules --shallow-submodules https://github.com/Siesta/MCORE-Decompiler
-cd MCORE-Decompiler
+git clone --depth=1 --recurse-submodules --shallow-submodules https://github.com/MotoFanRu/IDA_Decompiler_M-CORE
+
+cd IDA_Decompiler_M-CORE
 
 # 2. Configure and build
 cmake -B build -DCMAKE_BUILD_TYPE=Release
@@ -165,11 +166,12 @@ or complete one. Known limits:
 
 Disassembly is provided by IDA Pro 9.4's built-in MCORE processor. Earlier
 versions of this project used the community
-[M-CORE_IDA-Pro](https://github.com/MotoFanRu/M-CORE_IDA-Pro) module; thanks to
-its original and modern maintainers for enabling the initial implementation.
+[IDA_Module_M-CORE](https://github.com/MotoFanRu/IDA_Module_M-CORE) module;
+thanks to its original and modern maintainers for enabling the initial
+implementation.
 
 ## License
 
-[MIT](LICENSE) for the code in this repository. IDA Pro and its processor
+[MIT](License.md) for the code in this repository. IDA Pro and its processor
 modules remain proprietary Hex-Rays software; the separately downloaded IDA SDK
 is distributed under its own license.
