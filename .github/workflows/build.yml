@@ -32,9 +32,9 @@ jobs:
           fetch-depth: 1 # --depth=1
 
 
-      - name: Dependencies - (${{ matrix.name }})
-        if: matrix.compiler == 'msvc'
-        run: vcpkg install sdl2:x64-windows
+#      - name: Dependencies - (${{ matrix.name }})
+#        if: matrix.compiler == 'msvc'
+#        run: vcpkg install sdl2:x64-windows
 
       - name: Dependencies - (${{ matrix.name }})
         if: runner.os == 'Linux'
